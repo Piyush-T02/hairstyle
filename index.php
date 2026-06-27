@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Strand — Virtual Hairstyle & Color Studio</title>
+    <title>Aura — Virtual Hairstyle & Color Studio</title>
     <meta name="description" content="Try new hairstyles and discover your perfect hair color — all from a single photo.">
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
@@ -15,9 +15,9 @@
 
     <header class="nav">
         <div class="nav-inner">
-            <a href="#" class="logo">
+            <a href="#" onclick="window.scrollTo(0,0); return false;" class="logo">
                 <div class="logo-icon"><i class="fa-solid fa-scissors"></i></div>
-                Strand
+                Aura
             </a>
             <div class="nav-links">
                 <a href="#features">Features</a>
@@ -80,14 +80,18 @@
     </section>
 
     <footer class="footer">
-        <p>&copy; 2026 Strand. All rights reserved. &nbsp;|&nbsp; <a href="#" style="color:var(--text-muted)">Privacy</a> &nbsp;|&nbsp; <a href="#" style="color:var(--text-muted)">Terms</a></p>
+        <p>&copy; 2026 Aura. All rights reserved. &nbsp;|&nbsp; <a href="#" style="color:var(--text-muted)">Privacy</a> &nbsp;|&nbsp; <a href="#" style="color:var(--text-muted)">Terms</a></p>
     </footer>
 </div>
 
 <!-- ═══ STUDIO ═══ -->
 <div id="studio" class="studio">
     <div class="studio-header">
-        <div class="studio-title">
+        <a href="#" class="logo" onclick="closeStudio(); return false;" style="color:white; text-decoration:none; display:flex; align-items:center; gap:8px;">
+            <div class="logo-icon" style="background:var(--accent-light); padding:6px; border-radius:8px; color:var(--bg-dark); font-size:0.9rem;"><i class="fa-solid fa-scissors"></i></div>
+            <span style="font-weight:700; font-size:1.1rem; letter-spacing:-0.02em;">Aura</span>
+        </a>
+        <div class="studio-title" style="flex:1; justify-content:center;">
             <i class="fa-solid fa-wand-magic-sparkles" style="color:var(--accent-light)"></i>
             <span id="studio-feature-label">Hairstyle Try-On</span>
             <span id="studio-badge" class="studio-badge badge-wait">Connecting…</span>
