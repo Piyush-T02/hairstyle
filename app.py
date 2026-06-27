@@ -202,8 +202,8 @@ def generate_color_tryon(img_bgr, best_color_name):
         f"• Output only the edited image."
     )
 
-    img_512 = cv2.resize(img_bgr, (512, 512), interpolation=cv2.INTER_AREA)
-    _, buf = cv2.imencode('.png', img_512)
+    img_1024 = cv2.resize(img_bgr, (1024, 1024), interpolation=cv2.INTER_AREA)
+    _, buf = cv2.imencode('.png', img_1024)
 
     print(f"[Strand] Step 2/2: Generating try-on with '{best_color_name}'...")
     resp = requests.post(
@@ -214,7 +214,7 @@ def generate_color_tryon(img_bgr, best_color_name):
             "prompt": (None, prompt),
             "model": (None, "gpt-image-2"),
             "n": (None, "1"),
-            "size": (None, "512x512"),
+            "size": (None, "1024x1024"),
         },
         timeout=180,
     )
