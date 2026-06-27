@@ -79,6 +79,10 @@ function handleFileSelect(e) {
 }
 
 function uploadFile(file) {
+    if (!file.type.startsWith('image/')) {
+        alert("Error: Please upload a valid image file (JPEG, PNG, WEBP). Other file types are not allowed.");
+        return;
+    }
     if (file.size > 5 * 1024 * 1024) { alert('File too large — max 5 MB.'); return; }
 
     // Show preview
@@ -115,12 +119,7 @@ function uploadFile(file) {
 }
 
 function goNext() {
-    if (currentFeature === 'color') {
-        // Skip style selection, go straight to processing
-        startProcess(null);
-    } else {
-        showStep('step-style');
-    }
+    startProcess(null);
 }
 
 function resetUpload() {
@@ -137,40 +136,10 @@ function resetUpload() {
 
 function resetAll() {
     resetUpload();
-    selectedStyle = null;
-    document.querySelectorAll('.s-card').forEach(c => c.classList.remove('selected'));
     showStep('step-upload');
 }
 
-// ── Style selection ──
-function selectStyle(name) {
-    document.querySelectorAll('.s-card').forEach(c => c.classList.remove('selected'));
-    if (selectedStyle === name) { selectedStyle = null; updateGenBtn(); return; }
-    selectedStyle = name;
-    const card = document.getElementById('card-' + name);
-    if (card) card.classList.add('selected');
-    updateGenBtn();
-}
 
-function updateGenBtn() {
-    const btn = document.getElementById('btn-generate');
-    if (selectedStyle) {
-        btn.className = 'btn-primary enabled';
-        btn.onclick = () => startProcess(selectedStyle);
-    } else {
-        btn.className = 'btn-primary disabled';
-        btn.onclick = null;
-    }
-}
-
-function switchTab(tab) {
-    const isW = tab === 'women';
-    document.getElementById('tab-men').className = isW ? 'tab-btn' : 'tab-btn active';
-    document.getElementById('tab-women').className = isW ? 'tab-btn active' : 'tab-btn';
-    document.getElementById('grid-men').style.display = isW ? 'none' : 'grid';
-    document.getElementById('grid-women').style.display = isW ? 'grid' : 'none';
-    if (selectedStyle) { selectedStyle = null; updateGenBtn(); }
-}
 
 // ── Processing ──
 function startProcess(hairstyle) {

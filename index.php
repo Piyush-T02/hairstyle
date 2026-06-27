@@ -132,61 +132,6 @@
             </p>
         </div>
 
-        <!-- STEP 2: Style Selection (hairstyle only) -->
-        <div id="step-style" class="step">
-            <h2 class="step-title">Choose a Hairstyle</h2>
-            <p class="step-sub">Pick a style to try, or skip to let us pick the best one for you.</p>
-
-            <div class="tab-row">
-                <div class="tab-group">
-                    <button id="tab-men" class="tab-btn active" onclick="switchTab('men')">Men's</button>
-                    <button id="tab-women" class="tab-btn" onclick="switchTab('women')">Women's</button>
-                </div>
-            </div>
-
-            <div id="grid-men" class="style-grid">
-                <?php
-                $men = [
-                    ['Fade','fade','Sharp & Modern'],
-                    ['Quiff','quiff','Voluminous & Dynamic'],
-                    ['Buzz Cut','buzz_cut','Clean & Bold'],
-                    ['Curly Top','curly_top','Textured & Energetic'],
-                    ['Pompadour','pompadour','Classic & Polished'],
-                    ['Side Part','side_part','Refined & Elegant'],
-                ];
-                foreach ($men as $s): ?>
-                <div class="s-card" id="card-<?= htmlspecialchars($s[0]) ?>" onclick="selectStyle('<?= $s[0] ?>')">
-                    <img class="s-img" src="assets/hairstyles/<?= $s[1] ?>.png" alt="<?= $s[0] ?>">
-                    <h5><?= $s[0] ?></h5><span><?= $s[2] ?></span>
-                </div>
-                <?php endforeach; ?>
-            </div>
-
-            <div id="grid-women" class="style-grid" style="display:none">
-                <?php
-                $women = [
-                    ['Bob Cut','bob_cut','Sleek & Professional'],
-                    ['Beach Waves','beach_waves','Voluminous & Casual'],
-                    ['Pixie Cut','pixie_cut','Bold & Minimalist'],
-                ];
-                foreach ($women as $s): ?>
-                <div class="s-card" id="card-<?= htmlspecialchars($s[0]) ?>" onclick="selectStyle('<?= $s[0] ?>')">
-                    <img class="s-img" src="assets/hairstyles/<?= $s[1] ?>.png" alt="<?= $s[0] ?>">
-                    <h5><?= $s[0] ?></h5><span><?= $s[2] ?></span>
-                </div>
-                <?php endforeach; ?>
-            </div>
-
-            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
-                <button class="btn-back" onclick="showStep('step-upload')"><i class="fa-solid fa-chevron-left"></i> Back</button>
-                <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
-                    <button class="btn-skip" onclick="startProcess(null)"><i class="fa-solid fa-wand-magic-sparkles"></i> Auto-Pick Best</button>
-                    <button id="btn-generate" class="btn-primary disabled" style="width:auto;padding:12px 24px">
-                        Generate <i class="fa-solid fa-arrow-right"></i>
-                    </button>
-                </div>
-            </div>
-        </div>
 
         <!-- STEP 3: Loading -->
         <div id="step-loading" class="step">
