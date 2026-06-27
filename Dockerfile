@@ -21,19 +21,7 @@ COPY . /app
 RUN python3 -m venv venv
 RUN ./venv/bin/pip install --no-cache-dir flask flask-cors opencv-python-headless numpy requests
 
-# Create the startup script that runs both the Python API and PHP frontend
-RUN echo '#!/bin/bash\n\
-# Start the Python backend on port 5000 in the background\n\
-./venv/bin/python3 app.py &\n\
-\n\
-# Railway sets the PORT environment variable for web traffic.\n\
-PORT="${PORT:-8080}"\n\
-\n\
-# Start the PHP frontend in the foreground\n\
-php -S 0.0.0.0:$PORT -t .\n\
-' > /app/start.sh
-
-RUN chmod +x /app/start.sh
+RUN chmod +x /app/railway_start.sh
 
 # Run the startup script when the container launches
-CMD ["/app/start.sh"]
+CMD ["/app/railway_start.sh"]
