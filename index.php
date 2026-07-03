@@ -145,7 +145,7 @@
                     <div class="scan-line"></div>
                 </div>
                 <h3 id="loading-label" style="font-weight:700;margin-bottom:8px">Processing…</h3>
-                <p style="font-size:0.75rem;color:var(--text-dim);margin-bottom:24px">This usually takes 10–20 seconds.</p>
+                <p style="font-size:0.75rem;color:var(--text-dim);margin-bottom:24px">This usually takes 30–100 seconds.</p>
                 <div class="log-box">
                     <div><i class="fa-solid fa-circle-notch fa-spin" style="color:var(--accent-light)"></i> <span></span></div>
                     <div><i class="fa-solid fa-circle-notch fa-spin" style="color:var(--accent-light)"></i> <span></span></div>

@@ -31,11 +31,52 @@ def _get_api_key():
     return key
 
 
-# ── Hairstyle prompt (optimized, generalized) ────────────────────────────────
+# ── Hairstyle prompts ─────────────────────────────────────────────────────────
+# Two-step pipeline (mirrors the color-analysis flow below):
+#   1) FACE_HAIRSTYLE_ANALYSIS_PROMPT — a fast vision call actually looks at the
+#      face and decides ONE specific style. gpt-image-2 doesn't reliably do this
+#      kind of visual reasoning inside a single edit call, so asking it to
+#      "analyze and pick" in-prompt produced near-identical results per gender.
+#   2) HAIRSTYLE_EXECUTE_PROMPT — gpt-image-2 just executes the already-decided
+#      style, which is both more face-specific and a simpler task for it to do.
 
-HAIRSTYLE_PROMPT = """You are an elite, high-end celebrity hairstylist. Your goal is to give this person the most attractive, flattering, and stylish haircut possible.
-Analyze their face shape and features, and give them a premium, modern haircut that dramatically improves their appearance and suits them perfectly.
-For men, favor clean, sharp fades or tapers on the sides with textured, voluminous tops (e.g., modern quiff, textured fringe, or classic taper) that frame the face perfectly.
+FACE_HAIRSTYLE_ANALYSIS_PROMPT = """You are an elite hairstylist doing a haircut consultation.
+
+Look closely at this photo and assess:
+• Face shape (oval / round / square / rectangle / heart / diamond / triangle)
+• Forehead size and hairline
+• Jawline definition and cheekbone prominence
+• Current hair length, texture, and density
+• Apparent gender presentation (so the style suggestion matches conventions for it)
+
+Using classic hairstyling principles — add height/volume for round or short faces,
+add width or a fringe for long faces, soften an angular jaw with layers, rebalance
+volume if the forehead/chin look imbalanced — decide the ONE haircut that would
+most flatter THIS SPECIFIC face. Base it on what you actually see, not a default
+trendy cut.
+
+Respond with ONLY a concise, specific hairstyle description (1-2 sentences) that
+could be handed directly to a barber/stylist — no preamble, no explanation, no
+markdown, no quotes.
+
+Example output: Medium-length textured crop with a soft side-swept fringe and a
+low taper fade, subtle volume at the crown to add height."""
+
+HAIRSTYLE_EXECUTE_PROMPT = """You are an elite, high-end hairstylist executing a haircut that has already been chosen for this specific client: {hairstyle}
+
+Edit ONLY the scalp hair to this exact style.
+
+Absolute rules:
+• Face stays identical — eyes, nose, lips, eyebrows, skin, expression, age, ethnicity unchanged.
+• Facial hair (beard/mustache/stubble) stays exactly as-is.
+• Clothing, accessories, background, lighting, shadows, camera angle, crop — all unchanged.
+• Do not beautify, smooth, retouch, or enhance anything except the hair.
+• The hair must look incredibly natural and photorealistic, blending naturally with the hairline.
+• Output only the edited image."""
+
+# Fallback used only if face analysis fails for some reason — old generic prompt.
+HAIRSTYLE_FALLBACK_PROMPT = """You are an elite, high-end celebrity hairstylist. Analyze this person's face shape and give them a premium, modern haircut that suits them perfectly.
+For men, favor clean, sharp fades or tapers with textured, voluminous tops that frame the face perfectly.
 For women, favor elegant, face-framing layers or modern voluminous cuts.
 
 Edit ONLY the scalp hair to this perfect style.
@@ -100,20 +141,63 @@ def b64_from_file(path):
         return f'data:{mime};base64,' + base64.b64encode(f.read()).decode()
 
 
+# ── Face analysis for hairstyle (gpt-4o-mini vision, ~₹0.1, ~2s) ─────────────
+
+def analyze_face_for_hairstyle(img_bgr):
+    """Look at the actual face and decide ONE specific, flattering hairstyle."""
+    api_key = _get_api_key()
+
+    img_small = cv2.resize(img_bgr, (256, 256), interpolation=cv2.INTER_AREA)
+    _, buf = cv2.imencode('.jpg', img_small, [cv2.IMWRITE_JPEG_QUALITY, 70])
+    img_b64 = base64.b64encode(buf).decode()
+
+    print("[Strand] Step 1/2: Analyzing face shape for hairstyle fit...")
+    resp = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": "gpt-4o-mini",
+            "max_tokens": 150,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": FACE_HAIRSTYLE_ANALYSIS_PROMPT},
+                    {"type": "image_url", "image_url": {
+                        "url": f"data:image/jpeg;base64,{img_b64}",
+                        "detail": "low"
+                    }}
+                ]
+            }]
+        },
+        timeout=30,
+    )
+
+    if resp.status_code != 200:
+        raise RuntimeError(f"API error {resp.status_code}: {resp.text}")
+
+    style = resp.json()['choices'][0]['message']['content'].strip().strip('"')
+    print(f"[Strand] Chosen hairstyle: {style}")
+    return style
+
+
 # ── Hairstyle swap (gpt-image-2, single API call, ~₹1.3) ─────────────────────
 
 def swap_hairstyle(img_bgr, hairstyle=""):
     api_key = _get_api_key()
 
-    prompt = HAIRSTYLE_PROMPT
     if hairstyle:
-        prompt += f"\n\nOVERRIDE: Apply this specific hairstyle: {hairstyle}. All other rules still apply."
+        prompt = HAIRSTYLE_EXECUTE_PROMPT.format(hairstyle=hairstyle)
+    else:
+        prompt = HAIRSTYLE_FALLBACK_PROMPT
 
     # Resize to 1024x1024 (required by gpt-image-2 minimum pixel budget)
     img_1024 = cv2.resize(img_bgr, (1024, 1024), interpolation=cv2.INTER_AREA)
     _, buf = cv2.imencode('.png', img_1024)
 
-    print("[Strand] Calling gpt-image-2 for hairstyle swap...")
+    print("[Strand] Step 2/2: Applying chosen hairstyle with gpt-image-2...")
     resp = requests.post(
         "https://api.openai.com/v1/images/edits",
         headers={"Authorization": f"Bearer {api_key}"},
@@ -123,6 +207,7 @@ def swap_hairstyle(img_bgr, hairstyle=""):
             "model": (None, "gpt-image-2"),
             "n": (None, "1"),
             "size": (None, "1024x1024"),
+            "quality": (None, "medium"),
         },
         timeout=180,
     )
@@ -249,6 +334,15 @@ def swap():
         img = decode_b64_to_bgr(src_b64)
         if img is None:
             return jsonify({'error': 'Could not decode image.'}), 400
+
+        # Auto-pick flow: no explicit hairstyle given, so actually look at the
+        # face first and decide one before handing it to the image edit.
+        if not hairstyle:
+            try:
+                hairstyle = analyze_face_for_hairstyle(img)
+            except Exception:
+                print(f"[Strand] Face analysis failed, falling back to generic prompt:\n{traceback.format_exc()}")
+                hairstyle = ""
 
         result = swap_hairstyle(img, hairstyle)
         return jsonify({'result_url': bgr_to_b64_jpg(result)})

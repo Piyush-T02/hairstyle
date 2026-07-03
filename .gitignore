@@ -17,3 +17,4 @@ uploads/
 # Temp files
 .DS_Store
 .claude/
+.md
