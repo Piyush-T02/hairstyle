@@ -100,7 +100,7 @@ function handleUpload() {
 
     $file = $_FILES['image'];
     if ($file['error'] !== UPLOAD_ERR_OK) { echo json_encode(['success' => false, 'error' => 'Upload failed.']); exit; }
-    if ($file['size'] > 5 * 1024 * 1024) { echo json_encode(['success' => false, 'error' => 'Max 5 MB.']); exit; }
+    if ($file['size'] > 30 * 1024 * 1024) { echo json_encode(['success' => false, 'error' => 'Max 30 MB.']); exit; }
 
     $mime    = mime_content_type($file['tmp_name']);
     $allowed = ['image/jpeg', 'image/png', 'image/webp'];

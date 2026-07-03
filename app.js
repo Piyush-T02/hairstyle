@@ -83,7 +83,7 @@ function uploadFile(file) {
         alert("Error: Please upload a valid image file (JPEG, PNG, WEBP). Other file types are not allowed.");
         return;
     }
-    if (file.size > 5 * 1024 * 1024) { alert('File too large — max 5 MB.'); return; }
+    if (file.size > 30 * 1024 * 1024) { alert('File too large — max 30 MB.'); return; }
 
     // Show preview
     const reader = new FileReader();
