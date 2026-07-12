@@ -7,14 +7,28 @@ venv/
 __pycache__/
 *.pyc
 
-# User Uploads and generated images
+# User Uploads (NOT the logo)
 uploads/
-*.jpeg
-*.jpg
-*.png
+otp_store.json
+
+# Test & scratch files
 *.pdf
+test_api.py
+generate_hairstyle_*.py
+list_models.py
+response*.json
+*_COSTS*.md
+CLAUDE.md
+good_plan.md
+plan_*.md
+run.md
+video.md
+start.sh
+
+# Generated output images (not logo)
+openai_*.jpeg
+Og_image.jpeg
 
 # Temp files
 .DS_Store
 .claude/
-.md

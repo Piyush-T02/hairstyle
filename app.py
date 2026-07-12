@@ -1,9 +1,14 @@
 """
-Strand — Backend API
+Trekky — Backend API
 --------------------
-POST /api/swap            Hairstyle edit (gpt-image-2, ~₹1.3/image)
-POST /api/color-analysis  Hair color recommendations (gpt-4o-mini vision, ~₹0.1)
+POST /api/swap            Hairstyle edit (gpt-image-2 edits, ~₹5/image)
+POST /api/color           Hair color analysis + try-on
 GET  /api/health          Health check
+
+Cost target: ₹90 for 5 photos = ₹18/photo budget.
+Actual cost per hairstyle: ~₹5.5 (gpt-4o-mini ~₹0.1 + gpt-image-2 ~₹5.4)
+Actual cost per color:     ~₹5.6 (gpt-4o-mini ~₹0.1 × 2 + gpt-image-2 ~₹5.4)
+Total 5 photos worst case: ~₹28 (well under ₹90 budget)
 """
 
 import base64
@@ -26,43 +31,40 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 def _get_api_key():
     key = os.environ.get("OPENAI_API_KEY")
     if not key:
-        with open(os.path.join(BASE_DIR, 'chatgpt.token')) as f:
-            key = f.read().strip()
+        token_path = os.path.join(BASE_DIR, 'chatgpt.token')
+        if os.path.exists(token_path):
+            with open(token_path) as f:
+                key = f.read().strip()
     return key
 
 
-# ── Hairstyle prompts ─────────────────────────────────────────────────────────
-# Two-step pipeline (mirrors the color-analysis flow below):
-#   1) FACE_HAIRSTYLE_ANALYSIS_PROMPT — a fast vision call actually looks at the
-#      face and decides ONE specific style. gpt-image-2 doesn't reliably do this
-#      kind of visual reasoning inside a single edit call, so asking it to
-#      "analyze and pick" in-prompt produced near-identical results per gender.
-#   2) HAIRSTYLE_EXECUTE_PROMPT — gpt-image-2 just executes the already-decided
-#      style, which is both more face-specific and a simpler task for it to do.
+# ── Prompts ───────────────────────────────────────────────────────────────────
 
 FACE_HAIRSTYLE_ANALYSIS_PROMPT = """You are an elite hairstylist doing a haircut consultation.
+The client is {gender}.
 
 Look closely at this photo and assess:
 • Face shape (oval / round / square / rectangle / heart / diamond / triangle)
 • Forehead size and hairline
 • Jawline definition and cheekbone prominence
 • Current hair length, texture, and density
-• Apparent gender presentation (so the style suggestion matches conventions for it)
 
-Using classic hairstyling principles — add height/volume for round or short faces,
-add width or a fringe for long faces, soften an angular jaw with layers, rebalance
-volume if the forehead/chin look imbalanced — decide the ONE haircut that would
-most flatter THIS SPECIFIC face. Base it on what you actually see, not a default
-trendy cut.
+The client wants a {style_category} style. Using classic hairstyling principles — add
+height/volume for round or short faces, add width or a fringe for long faces, soften
+an angular jaw with layers, rebalance volume if the forehead/chin look imbalanced —
+decide the ONE specific {style_category} haircut that would most flatter THIS SPECIFIC
+face. Base it on what you actually see, not a default trendy cut.
 
 Respond with ONLY a concise, specific hairstyle description (1-2 sentences) that
 could be handed directly to a barber/stylist — no preamble, no explanation, no
 markdown, no quotes.
 
-Example output: Medium-length textured crop with a soft side-swept fringe and a
-low taper fade, subtle volume at the crown to add height."""
+Example output for male: Medium-length textured crop with a soft side-swept fringe and a
+low taper fade, subtle volume at the crown to add height.
+Example output for female: Shoulder-length layered cut with curtain bangs and
+face-framing layers to soften the jawline."""
 
-HAIRSTYLE_EXECUTE_PROMPT = """You are an elite, high-end hairstylist executing a haircut that has already been chosen for this specific client: {hairstyle}
+HAIRSTYLE_EXECUTE_PROMPT = """You are an elite, high-end hairstylist executing a haircut that has already been chosen for this specific {gender} client: {hairstyle}
 
 Edit ONLY the scalp hair to this exact style.
 
@@ -74,8 +76,7 @@ Absolute rules:
 • The hair must look incredibly natural and photorealistic, blending naturally with the hairline.
 • Output only the edited image."""
 
-# Fallback used only if face analysis fails for some reason — old generic prompt.
-HAIRSTYLE_FALLBACK_PROMPT = """You are an elite, high-end celebrity hairstylist. Analyze this person's face shape and give them a premium, modern haircut that suits them perfectly.
+HAIRSTYLE_FALLBACK_PROMPT = """You are an elite, high-end celebrity hairstylist. Analyze this {gender} person's face shape and give them a premium, modern haircut that suits them perfectly.
 For men, favor clean, sharp fades or tapers with textured, voluminous tops that frame the face perfectly.
 For women, favor elegant, face-framing layers or modern voluminous cuts.
 
@@ -90,36 +91,39 @@ Absolute rules:
 • Output only the edited image."""
 
 
-COLOR_ANALYSIS_PROMPT = """You are an expert hair colorist and personal color analyst. Analyze this person's photo and determine:
+COLOR_ANALYSIS_PROMPT = """You are an expert hair colorist and personal color analyst. This person is {gender}.
+Analyze this person's photo and determine:
 
 1. Their skin undertone (warm, cool, or neutral)
 2. Their season type (e.g., Warm & Clear, Cool & Deep, etc.)
-3. The 5 BEST hair colors that would flatter them most
+3. The 5 BEST hair colors that would flatter them most (appropriate for their gender)
 4. The 5 hair colors they should AVOID
 5. A brief explanation of WHY these colors work or don't
 
 Return your analysis as valid JSON ONLY (no markdown, no code blocks) in this exact format:
-{
+{{
   "undertone": "Warm",
   "season": "Warm & Clear",
   "best_colors": [
-    {"name": "Rich Dark Brown", "hex": "#3B2314"},
-    {"name": "Chocolate Brown", "hex": "#4A2C2A"},
-    {"name": "Chestnut Brown", "hex": "#6B3A2E"},
-    {"name": "Caramel Highlights", "hex": "#A0673D"},
-    {"name": "Honey Brown Balayage", "hex": "#C48B3F"}
+    {{"name": "Rich Dark Brown", "hex": "#3B2314"}},
+    {{"name": "Chocolate Brown", "hex": "#4A2C2A"}},
+    {{"name": "Chestnut Brown", "hex": "#6B3A2E"}},
+    {{"name": "Caramel Highlights", "hex": "#A0673D"}},
+    {{"name": "Honey Brown Balayage", "hex": "#C48B3F"}}
   ],
   "avoid_colors": [
-    {"name": "Ash Blonde", "hex": "#B8A99A"},
-    {"name": "Platinum Blonde", "hex": "#E5D9C9"},
-    {"name": "Jet Black", "hex": "#0A0A0A"},
-    {"name": "Ash Brown", "hex": "#7A6B5D"},
-    {"name": "Cherry Red", "hex": "#9C1B30"}
+    {{"name": "Ash Blonde", "hex": "#B8A99A"}},
+    {{"name": "Platinum Blonde", "hex": "#E5D9C9"}},
+    {{"name": "Jet Black", "hex": "#0A0A0A"}},
+    {{"name": "Ash Brown", "hex": "#7A6B5D"}},
+    {{"name": "Cherry Red", "hex": "#9C1B30"}}
   ],
-  "why_best": "Warm tones enhance your natural glow and brighten your complexion. Rich, dimensional shades add depth and make your features stand out.",
-  "why_avoid": "Cool-toned and ashy shades can wash out your warm complexion and make you look tired. Very dark solid colors can appear too harsh against your skin."
-}"""
+  "why_best": "Warm tones enhance your natural glow.",
+  "why_avoid": "Cool-toned and ashy shades can wash out your warm complexion."
+}}"""
 
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def decode_b64_to_bgr(b64):
     if ',' in b64:
@@ -133,17 +137,9 @@ def bgr_to_b64_jpg(img, quality=92):
     return 'data:image/jpeg;base64,' + base64.b64encode(buf).decode()
 
 
-def b64_from_file(path):
-    """Read a file and return data URI base64."""
-    import mimetypes
-    mime = mimetypes.guess_type(path)[0] or 'image/jpeg'
-    with open(path, 'rb') as f:
-        return f'data:{mime};base64,' + base64.b64encode(f.read()).decode()
-
-
 # ── Face analysis for hairstyle (gpt-4o-mini vision, ~₹0.1, ~2s) ─────────────
 
-def analyze_face_for_hairstyle(img_bgr):
+def analyze_face_for_hairstyle(img_bgr, gender="male", style_category=""):
     """Look at the actual face and decide ONE specific, flattering hairstyle."""
     api_key = _get_api_key()
 
@@ -151,7 +147,12 @@ def analyze_face_for_hairstyle(img_bgr):
     _, buf = cv2.imencode('.jpg', img_small, [cv2.IMWRITE_JPEG_QUALITY, 70])
     img_b64 = base64.b64encode(buf).decode()
 
-    print("[Strand] Step 1/2: Analyzing face shape for hairstyle fit...")
+    prompt = FACE_HAIRSTYLE_ANALYSIS_PROMPT.format(
+        gender=gender,
+        style_category=style_category or "best-fitting"
+    )
+
+    print(f"[Trekky] Step 1/2: Analyzing face ({gender}, style: {style_category})...")
     resp = requests.post(
         "https://api.openai.com/v1/chat/completions",
         headers={
@@ -164,7 +165,7 @@ def analyze_face_for_hairstyle(img_bgr):
             "messages": [{
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": FACE_HAIRSTYLE_ANALYSIS_PROMPT},
+                    {"type": "text", "text": prompt},
                     {"type": "image_url", "image_url": {
                         "url": f"data:image/jpeg;base64,{img_b64}",
                         "detail": "low"
@@ -179,25 +180,26 @@ def analyze_face_for_hairstyle(img_bgr):
         raise RuntimeError(f"API error {resp.status_code}: {resp.text}")
 
     style = resp.json()['choices'][0]['message']['content'].strip().strip('"')
-    print(f"[Strand] Chosen hairstyle: {style}")
+    print(f"[Trekky] Chosen hairstyle: {style}")
     return style
 
 
-# ── Hairstyle swap (gpt-image-2, single API call, ~₹1.3) ─────────────────────
+# ── Hairstyle swap (gpt-image-2, ~₹5.4) ──────────────────────────────────────
 
-def swap_hairstyle(img_bgr, hairstyle=""):
+def swap_hairstyle(img_bgr, hairstyle="", gender="male"):
     api_key = _get_api_key()
+    orig_h, orig_w = img_bgr.shape[:2]
 
     if hairstyle:
-        prompt = HAIRSTYLE_EXECUTE_PROMPT.format(hairstyle=hairstyle)
+        prompt = HAIRSTYLE_EXECUTE_PROMPT.format(hairstyle=hairstyle, gender=gender)
     else:
-        prompt = HAIRSTYLE_FALLBACK_PROMPT
+        prompt = HAIRSTYLE_FALLBACK_PROMPT.format(gender=gender)
 
-    # Resize to 1024x1024 (required by gpt-image-2 minimum pixel budget)
+    # Resize to 1024x1024 for API (required minimum pixel budget)
     img_1024 = cv2.resize(img_bgr, (1024, 1024), interpolation=cv2.INTER_AREA)
     _, buf = cv2.imencode('.png', img_1024)
 
-    print("[Strand] Step 2/2: Applying chosen hairstyle with gpt-image-2...")
+    print("[Trekky] Step 2/2: Applying hairstyle with gpt-image-2...")
     resp = requests.post(
         "https://api.openai.com/v1/images/edits",
         headers={"Authorization": f"Bearer {api_key}"},
@@ -219,13 +221,17 @@ def swap_hairstyle(img_bgr, hairstyle=""):
     result_bytes = base64.b64decode(b64_data)
     result_img = cv2.imdecode(np.frombuffer(result_bytes, np.uint8), cv2.IMREAD_COLOR)
 
-    print("[Strand] Hairstyle swap done.")
+    # Resize output back to original image dimensions
+    if result_img.shape[:2] != (orig_h, orig_w):
+        result_img = cv2.resize(result_img, (orig_w, orig_h), interpolation=cv2.INTER_LANCZOS4)
+
+    print("[Trekky] Hairstyle swap done.")
     return result_img
 
 
 # ── Color analysis (gpt-4o-mini vision → text, ~₹0.1) ────────────────────────
 
-def analyze_color(img_bgr):
+def analyze_color(img_bgr, gender="male"):
     """Step 1: Use cheap text model to determine best hair color."""
     api_key = _get_api_key()
 
@@ -233,7 +239,9 @@ def analyze_color(img_bgr):
     _, buf = cv2.imencode('.jpg', img_small, [cv2.IMWRITE_JPEG_QUALITY, 70])
     img_b64 = base64.b64encode(buf).decode()
 
-    print("[Strand] Step 1/2: Analyzing face with gpt-4o-mini...")
+    prompt = COLOR_ANALYSIS_PROMPT.format(gender=gender)
+
+    print(f"[Trekky] Step 1/2: Analyzing face with gpt-4o-mini ({gender})...")
     resp = requests.post(
         "https://api.openai.com/v1/chat/completions",
         headers={
@@ -246,7 +254,7 @@ def analyze_color(img_bgr):
             "messages": [{
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": COLOR_ANALYSIS_PROMPT},
+                    {"type": "text", "text": prompt},
                     {"type": "image_url", "image_url": {
                         "url": f"data:image/jpeg;base64,{img_b64}",
                         "detail": "low"
@@ -267,16 +275,17 @@ def analyze_color(img_bgr):
         text = text[:-3]
 
     analysis = json.loads(text.strip())
-    print(f"[Strand] Best color identified: {analysis['best_colors'][0]['name']}")
+    print(f"[Trekky] Best color identified: {analysis['best_colors'][0]['name']}")
     return analysis
 
 
-def generate_color_tryon(img_bgr, best_color_name):
+def generate_color_tryon(img_bgr, best_color_name, gender="male"):
     """Step 2: Generate 1 image with the best hair color applied."""
     api_key = _get_api_key()
+    orig_h, orig_w = img_bgr.shape[:2]
 
     prompt = (
-        f"Change ONLY the hair color in this photo to {best_color_name}. "
+        f"Change ONLY the hair color in this photo of a {gender} person to {best_color_name}. "
         f"Keep the exact same hairstyle, length, and texture — just change the color. "
         f"The result must look like a natural, professionally done hair coloring.\n\n"
         f"Absolute rules:\n"
@@ -290,7 +299,7 @@ def generate_color_tryon(img_bgr, best_color_name):
     img_1024 = cv2.resize(img_bgr, (1024, 1024), interpolation=cv2.INTER_AREA)
     _, buf = cv2.imencode('.png', img_1024)
 
-    print(f"[Strand] Step 2/2: Generating try-on with '{best_color_name}'...")
+    print(f"[Trekky] Step 2/2: Generating try-on with '{best_color_name}'...")
     resp = requests.post(
         "https://api.openai.com/v1/images/edits",
         headers={"Authorization": f"Bearer {api_key}"},
@@ -300,6 +309,7 @@ def generate_color_tryon(img_bgr, best_color_name):
             "model": (None, "gpt-image-2"),
             "n": (None, "1"),
             "size": (None, "1024x1024"),
+            "quality": (None, "medium"),
         },
         timeout=180,
     )
@@ -311,7 +321,11 @@ def generate_color_tryon(img_bgr, best_color_name):
     result_bytes = base64.b64decode(b64_data)
     result_img = cv2.imdecode(np.frombuffer(result_bytes, np.uint8), cv2.IMREAD_COLOR)
 
-    print("[Strand] Color try-on done.")
+    # Resize output back to original image dimensions
+    if result_img.shape[:2] != (orig_h, orig_w):
+        result_img = cv2.resize(result_img, (orig_w, orig_h), interpolation=cv2.INTER_LANCZOS4)
+
+    print("[Trekky] Color try-on done.")
     return result_img
 
 
@@ -328,6 +342,7 @@ def swap():
         data = request.get_json(force=True)
         src_b64 = data.get('source_image', '')
         hairstyle = data.get('hairstyle', '') or ''
+        gender = data.get('gender', 'male') or 'male'
 
         if not src_b64:
             return jsonify({'error': 'No source image provided.'}), 400
@@ -335,19 +350,18 @@ def swap():
         if img is None:
             return jsonify({'error': 'Could not decode image.'}), 400
 
-        # Auto-pick flow: no explicit hairstyle given, so actually look at the
-        # face first and decide one before handing it to the image edit.
+        # Auto-pick flow: analyze face first and decide the best style
         if not hairstyle:
             try:
-                hairstyle = analyze_face_for_hairstyle(img)
+                hairstyle = analyze_face_for_hairstyle(img, gender)
             except Exception:
-                print(f"[Strand] Face analysis failed, falling back to generic prompt:\n{traceback.format_exc()}")
+                print(f"[Trekky] Face analysis failed, falling back to generic prompt:\n{traceback.format_exc()}")
                 hairstyle = ""
 
-        result = swap_hairstyle(img, hairstyle)
+        result = swap_hairstyle(img, hairstyle, gender)
         return jsonify({'result_url': bgr_to_b64_jpg(result)})
     except Exception:
-        print(f"[Strand] ERROR:\n{traceback.format_exc()}")
+        print(f"[Trekky] ERROR:\n{traceback.format_exc()}")
         return jsonify({'error': 'Processing failed. Please try again.'}), 500
 
 
@@ -356,6 +370,7 @@ def color():
     try:
         data = request.get_json(force=True)
         src_b64 = data.get('source_image', '')
+        gender = data.get('gender', 'male') or 'male'
 
         if not src_b64:
             return jsonify({'error': 'No source image provided.'}), 400
@@ -364,21 +379,21 @@ def color():
             return jsonify({'error': 'Could not decode image.'}), 400
 
         # Step 1: Analyze (cheap, ~₹0.10)
-        analysis = analyze_color(img)
+        analysis = analyze_color(img, gender)
 
-        # Step 2: Generate 1 try-on image with the #1 best color (~₹1.3)
+        # Step 2: Generate 1 try-on image with the #1 best color (~₹5.4)
         best_color = analysis['best_colors'][0]['name']
-        result_img = generate_color_tryon(img, best_color)
+        result_img = generate_color_tryon(img, best_color, gender)
 
         return jsonify({
             'color_analysis': analysis,
             'result_url': bgr_to_b64_jpg(result_img)
         })
     except Exception:
-        print(f"[Strand] ERROR:\n{traceback.format_exc()}")
+        print(f"[Trekky] ERROR:\n{traceback.format_exc()}")
         return jsonify({'error': 'Analysis failed. Please try again.'}), 500
 
 
 if __name__ == '__main__':
-    print("[Strand] Backend ready — port 5000")
+    print("[Trekky] Backend ready — port 5000")
     app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
