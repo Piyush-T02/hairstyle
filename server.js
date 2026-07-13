@@ -174,7 +174,7 @@ async function sendOtpEmail(toEmail, otp) {
 // The single perfect prompt — AI analyzes face and applies the best version of the chosen style
 const HAIRSTYLE_PROMPT = (gender, style) => {
     const styleDesc = style === 'Auto-Select'
-        ? `trendiest, most modern, and extremely flattering premium hairstyle that perfectly matches their specific face shape, jawline, skin tone, and facial features`
+        ? `customized, highly flattering premium hairstyle that is mathematically and visually the best fit for their specific face structure, jawline, skin tone, and features`
         : `perfectly styled "${style}" hairstyle that flatters their exact face shape, skin tone, and features`;
 
     return `You are a world-class celebrity hairstylist. This is a ${gender} client's photo. ` +
