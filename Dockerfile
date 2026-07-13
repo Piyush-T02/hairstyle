@@ -1,27 +1,23 @@
-FROM ubuntu:22.04
-
-ENV DEBIAN_FRONTEND=noninteractive
-
-# Install PHP, Python, and OpenCV dependencies
-RUN apt-get update && apt-get install -y \
-    php-cli \
-    python3 \
-    python3-pip \
-    python3-venv \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
+FROM node:20-slim
 
 WORKDIR /app
 
-# Copy the app files
-COPY . /app
+# Copy root package files and install backend deps
+COPY package.json package-lock.json* ./
+RUN npm install --production
 
-# Install Python dependencies inside a virtual environment
-RUN python3 -m venv venv
-RUN ./venv/bin/pip install --no-cache-dir flask flask-cors opencv-python-headless numpy requests
+# Copy frontend and build it
+COPY frontend ./frontend
+RUN cd frontend && npm install && npm run build && mv dist ../public && cd .. && rm -rf frontend
 
-RUN chmod +x /app/railway_start.sh
+# Copy remaining backend files
+COPY server.js ./
+COPY trakky-logo.png ./
+COPY chatgpt.token* ./
 
-# Run the startup script when the container launches
-CMD ["/app/railway_start.sh"]
+# Create uploads directory
+RUN mkdir -p uploads
+
+EXPOSE 5000
+
+CMD ["node", "server.js"]
