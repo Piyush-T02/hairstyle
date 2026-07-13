@@ -44,21 +44,133 @@ const getApiKey = () => {
 };
 const openai = new OpenAI({ apiKey: getApiKey() });
 
+const { Pool } = require('pg');
+
 // OTP Store (in-memory)
 const otpStore = new Map();
 
-// ========== USERS DATABASE (JSON file — easily migrated to Railway Postgres) ==========
+// ========== DATABASE CONNECTION & INITIALIZATION ==========
+let pool = null;
+if (process.env.DATABASE_URL) {
+    console.log('[DB] Detected DATABASE_URL. Initializing PostgreSQL...');
+    pool = new Pool({
+        connectionString: process.env.DATABASE_URL,
+        ssl: { rejectUnauthorized: false }
+    });
+}
+
 const DB_PATH = path.join(__dirname, 'users.json');
-if (!fs.existsSync(DB_PATH)) fs.writeFileSync(DB_PATH, JSON.stringify([]));
+
+async function initializeDB() {
+    if (pool) {
+        try {
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS users (
+                    id SERIAL PRIMARY KEY,
+                    email VARCHAR(255) UNIQUE NOT NULL,
+                    mobile VARCHAR(50),
+                    name VARCHAR(255),
+                    location VARCHAR(255),
+                    sessions INT DEFAULT 5,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            `);
+            console.log('[DB] PostgreSQL "users" table is ready.');
+        } catch (err) {
+            console.error('[DB] PostgreSQL Table creation failed:', err.message);
+        }
+    } else {
+        if (!fs.existsSync(DB_PATH)) {
+            fs.writeFileSync(DB_PATH, JSON.stringify([], null, 2));
+        }
+        console.log('[DB] Local JSON database is ready.');
+    }
+}
+initializeDB();
 
 function getUsers() {
-    try { return JSON.parse(fs.readFileSync(DB_PATH, 'utf8')); }
-    catch { return []; }
+    try {
+        return JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
+    } catch {
+        return [];
+    }
 }
+
 function saveUsers(users) {
     fs.writeFileSync(DB_PATH, JSON.stringify(users, null, 2));
 }
-// ======================================================================================
+
+// Unified Database Helpers
+async function findUser(email, mobile) {
+    if (pool) {
+        let query = 'SELECT * FROM users WHERE email = $1';
+        let params = [email];
+        if (mobile) {
+            query += ' OR mobile = $2';
+            params.push(mobile);
+        }
+        const res = await pool.query(query, params);
+        return res.rows[0] || null;
+    } else {
+        const users = getUsers();
+        return users.find(u => u.email === email || (mobile && u.mobile === mobile)) || null;
+    }
+}
+
+async function checkSessions(email) {
+    if (pool) {
+        const res = await pool.query('SELECT sessions FROM users WHERE email = $1', [email]);
+        if (res.rows.length === 0) return null;
+        return res.rows[0].sessions;
+    } else {
+        const users = getUsers();
+        const user = users.find(u => u.email === email);
+        return user ? user.sessions : null;
+    }
+}
+
+async function createUser(email, mobile, name, location) {
+    if (pool) {
+        const res = await pool.query(
+            'INSERT INTO users (email, mobile, name, location, sessions) VALUES ($1, $2, $3, $4, 5) RETURNING *',
+            [email, mobile || '', name || '', location || '']
+        );
+        return res.rows[0];
+    } else {
+        const users = getUsers();
+        const newUser = {
+            email,
+            mobile: mobile || '',
+            name: name || '',
+            location: location || '',
+            sessions: 5,
+            createdAt: new Date().toISOString()
+        };
+        users.push(newUser);
+        saveUsers(users);
+        return newUser;
+    }
+}
+
+async function decrementSession(email) {
+    if (pool) {
+        const res = await pool.query(
+            'UPDATE users SET sessions = sessions - 1 WHERE email = $1 RETURNING sessions',
+            [email]
+        );
+        return res.rows[0] ? res.rows[0].sessions : 0;
+    } else {
+        const users = getUsers();
+        const userIndex = users.findIndex(u => u.email === email);
+        if (userIndex !== -1) {
+            users[userIndex].sessions = Math.max(0, users[userIndex].sessions - 1);
+            saveUsers(users);
+            return users[userIndex].sessions;
+        }
+        return 0;
+    }
+}
+// ==========================================================
 
 // Nodemailer Setup
 const transporter = nodemailer.createTransport({
@@ -92,10 +204,13 @@ app.post('/api/send_otp', async (req, res) => {
     if (!email) return res.status(400).json({ error: 'Email is required' });
 
     // Check if this email is already exhausted before even sending OTP
-    const users = getUsers();
-    const existing = users.find(u => u.email === email);
-    if (existing && existing.sessions <= 0) {
-        return res.status(403).json({ error: 'This email has already used all 5 sessions.' });
+    try {
+        const sessions = await checkSessions(email);
+        if (sessions !== null && sessions <= 0) {
+            return res.status(403).json({ error: 'This email has already used all 5 sessions.' });
+        }
+    } catch (err) {
+        console.error('[DB Check Error]', err.message);
     }
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
@@ -121,7 +236,7 @@ app.post('/api/send_otp', async (req, res) => {
 });
 
 // --- VERIFY OTP + DB REGISTRATION ---
-app.post('/api/verify_otp', (req, res) => {
+app.post('/api/verify_otp', async (req, res) => {
     const { email, mobile, name, location, otp } = req.body;
     if (!email || !otp) return res.status(400).json({ error: 'Email and OTP required' });
 
@@ -135,34 +250,21 @@ app.post('/api/verify_otp', (req, res) => {
 
     otpStore.delete(email);
 
-    // ===== STRICT UNIQUE ENFORCEMENT =====
-    let users = getUsers();
+    try {
+        // ===== STRICT UNIQUE ENFORCEMENT =====
+        let existingUser = await findUser(email, mobile);
 
-    // Check if email OR mobile already exists (prevents cheating by swapping one)
-    let existingByEmail = users.find(u => u.email === email);
-    let existingByMobile = mobile ? users.find(u => u.mobile === mobile) : null;
+        if (existingUser) {
+            return res.json({ success: true, user: existingUser });
+        }
 
-    if (existingByEmail) {
-        // Same email — return their existing profile (even if mobile differs)
-        return res.json({ success: true, user: existingByEmail });
+        // Brand new user
+        const newUser = await createUser(email, mobile, name, location);
+        return res.json({ success: true, user: newUser });
+    } catch (err) {
+        console.error('[DB Registration Error]', err.message);
+        return res.status(500).json({ error: 'Database registration failed. Please try again.' });
     }
-    if (existingByMobile) {
-        // Different email but same mobile — block them to their existing account
-        return res.json({ success: true, user: existingByMobile });
-    }
-
-    // Brand new user
-    const newUser = {
-        email,
-        mobile: mobile || '',
-        name: name || '',
-        location: location || '',
-        sessions: 5,
-        createdAt: new Date().toISOString()
-    };
-    users.push(newUser);
-    saveUsers(users);
-    return res.json({ success: true, user: newUser });
 });
 
 // --- UPLOAD ---
