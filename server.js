@@ -44,7 +44,7 @@ const getApiKey = () => {
 };
 const openai = new OpenAI({ apiKey: getApiKey() });
 
-const { Pool } = require('pg');
+const mysql = require('mysql2/promise');
 
 // OTP Store (in-memory)
 const otpStore = new Map();
@@ -52,21 +52,18 @@ const otpStore = new Map();
 // ========== DATABASE CONNECTION & INITIALIZATION ==========
 if (!process.env.DATABASE_URL) {
     console.error('CRITICAL ERROR: DATABASE_URL environment variable is missing.');
-    console.error('Please configure a PostgreSQL database in Railway and set DATABASE_URL.');
+    console.error('Please configure a MySQL database in Railway and set DATABASE_URL.');
     process.exit(1); // Stop the server if no database is configured
 }
 
-console.log('[DB] Detected DATABASE_URL. Initializing PostgreSQL...');
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false }
-});
+console.log('[DB] Detected DATABASE_URL. Initializing MySQL...');
+const pool = mysql.createPool(process.env.DATABASE_URL);
 
 async function initializeDB() {
     try {
         await pool.query(`
             CREATE TABLE IF NOT EXISTS users (
-                id SERIAL PRIMARY KEY,
+                id INT AUTO_INCREMENT PRIMARY KEY,
                 email VARCHAR(255) UNIQUE NOT NULL,
                 mobile VARCHAR(50),
                 name VARCHAR(255),
@@ -75,45 +72,47 @@ async function initializeDB() {
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         `);
-        console.log('[DB] PostgreSQL "users" table is ready.');
+        console.log('[DB] MySQL "users" table is ready.');
     } catch (err) {
-        console.error('[DB] PostgreSQL Table creation failed:', err.message);
+        console.error('[DB] MySQL Table creation failed:', err.message);
     }
 }
 initializeDB();
 
 // Unified Database Helpers
 async function findUser(email, mobile) {
-    let query = 'SELECT * FROM users WHERE email = $1';
+    let query = 'SELECT * FROM users WHERE email = ?';
     let params = [email];
     if (mobile) {
-        query += ' OR mobile = $2';
+        query += ' OR mobile = ?';
         params.push(mobile);
     }
-    const res = await pool.query(query, params);
-    return res.rows[0] || null;
+    const [rows] = await pool.execute(query, params);
+    return rows[0] || null;
 }
 
 async function checkSessions(email) {
-    const res = await pool.query('SELECT sessions FROM users WHERE email = $1', [email]);
-    if (res.rows.length === 0) return null;
-    return res.rows[0].sessions;
+    const [rows] = await pool.execute('SELECT sessions FROM users WHERE email = ?', [email]);
+    if (rows.length === 0) return null;
+    return rows[0].sessions;
 }
 
 async function createUser(email, mobile, name, location) {
-    const res = await pool.query(
-        'INSERT INTO users (email, mobile, name, location, sessions) VALUES ($1, $2, $3, $4, 5) RETURNING *',
+    const [result] = await pool.execute(
+        'INSERT INTO users (email, mobile, name, location, sessions) VALUES (?, ?, ?, ?, 5)',
         [email, mobile || '', name || '', location || '']
     );
-    return res.rows[0];
+    const [rows] = await pool.execute('SELECT * FROM users WHERE id = ?', [result.insertId]);
+    return rows[0];
 }
 
 async function decrementSession(email) {
-    const res = await pool.query(
-        'UPDATE users SET sessions = sessions - 1 WHERE email = $1 RETURNING sessions',
+    await pool.execute(
+        'UPDATE users SET sessions = sessions - 1 WHERE email = ?',
         [email]
     );
-    return res.rows[0] ? res.rows[0].sessions : 0;
+    const sessions = await checkSessions(email);
+    return sessions;
 }
 // ==========================================================
 
