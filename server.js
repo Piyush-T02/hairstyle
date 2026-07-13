@@ -1,7 +1,6 @@
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
-const nodemailer = require('nodemailer');
 const fs = require('fs');
 const path = require('path');
 const OpenAI = require('openai');
@@ -129,46 +128,46 @@ async function decrementSession(email) {
 }
 // ==========================================================
 
-// ==================== EMAIL via Gmail SMTP ====================
-// Uses port 465 (SSL) — more reliable than 587 STARTTLS
-// SMTP_EMAIL and SMTP_PASSWORD must be set in Railway env vars
-// SMTP_PASSWORD must be a Gmail App Password (16 chars, no spaces)
-// Generate one: myaccount.google.com/apppasswords
-const transporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 465,
-    secure: true,   // SSL from the start (port 465)
-    auth: {
-        user: process.env.SMTP_EMAIL,
-        pass: (process.env.SMTP_PASSWORD || '').replace(/\s/g, '') // strip any spaces from App Password
-    }
-});
-
-// Verify SMTP on startup so we know early if creds are wrong
-transporter.verify((err) => {
-    if (err) console.error('[SMTP] ❌ Connection FAILED:', err.message);
-    else console.log('[SMTP] ✅ Gmail ready to send emails via', process.env.SMTP_EMAIL);
-});
-
+// ==================== EMAIL via Brevo HTTP API ====================
+// Brevo (formerly Sendinblue) - FREE 300 emails/day
+// Uses HTTPS port 443 - works on Railway (SMTP ports 465/587 are blocked)
+// Setup: sign up free at brevo.com -> SMTP & API -> API Keys -> copy key
 async function sendOtpEmail(toEmail, otp) {
-    if (!process.env.SMTP_EMAIL || !process.env.SMTP_PASSWORD) {
-        throw new Error('SMTP_EMAIL and SMTP_PASSWORD env vars not set in Railway.');
-    }
-    await transporter.sendMail({
-        from: `"Trakky" <${process.env.SMTP_EMAIL}>`,
-        to: toEmail,
-        subject: 'Trakky — Your Verification Code',
-        html: `
-            <div style="font-family:sans-serif;text-align:center;padding:40px 20px;background:#0f0f0f;">
-                <h2 style="color:#7c5cfc;margin-bottom:8px;">Trakky</h2>
-                <p style="color:#aaa;margin-bottom:24px;">Your AI Hairstyle verification code:</p>
-                <div style="display:inline-block;background:#1a1a2e;border:2px solid #7c5cfc;border-radius:12px;padding:20px 40px;">
-                    <h1 style="letter-spacing:12px;color:#fff;font-size:36px;margin:0;">${otp}</h1>
+    const apiKey = process.env.BREVO_API_KEY;
+    if (!apiKey) throw new Error('BREVO_API_KEY not set in Railway environment variables.');
+
+    const senderEmail = process.env.SMTP_EMAIL || 'contact.piyush02@gmail.com';
+
+    const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: {
+            'accept': 'application/json',
+            'api-key': apiKey,
+            'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+            sender: { name: 'Trakky', email: senderEmail },
+            to: [{ email: toEmail }],
+            subject: 'Trakky — Your Verification Code',
+            htmlContent: `
+                <div style="font-family:sans-serif;text-align:center;padding:40px 20px;background:#0f0f0f;">
+                    <h2 style="color:#7c5cfc;margin-bottom:8px;">Trakky</h2>
+                    <p style="color:#aaa;margin-bottom:24px;">Your AI Hairstyle verification code:</p>
+                    <div style="display:inline-block;background:#1a1a2e;border:2px solid #7c5cfc;border-radius:12px;padding:20px 40px;">
+                        <h1 style="letter-spacing:12px;color:#fff;font-size:36px;margin:0;">${otp}</h1>
+                    </div>
+                    <p style="color:#666;margin-top:24px;font-size:13px;">This code expires in 5 minutes. Do not share it with anyone.</p>
                 </div>
-                <p style="color:#666;margin-top:24px;font-size:13px;">This code expires in 5 minutes.</p>
-            </div>
-        `
+            `
+        })
     });
+
+    const data = await response.json();
+    if (!response.ok) {
+        throw new Error(`Brevo API error ${response.status}: ${JSON.stringify(data)}`);
+    }
+    console.log('[Email] ✅ OTP sent to', toEmail, '| messageId:', data.messageId);
+    return data;
 }
 // ====================================================================
 
