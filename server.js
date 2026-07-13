@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
+const nodemailer = require('nodemailer');
 const fs = require('fs');
 const path = require('path');
 const OpenAI = require('openai');
@@ -128,40 +129,46 @@ async function decrementSession(email) {
 }
 // ==========================================================
 
-// ==================== EMAIL via Resend HTTP API ====================
-// Resend works via HTTPS (port 443) — never blocked on Railway/cloud
-async function sendOtpEmail(toEmail, otp) {
-    const RESEND_API_KEY = process.env.RESEND_API_KEY;
-    if (!RESEND_API_KEY) throw new Error('RESEND_API_KEY environment variable is not set in Railway.');
-
-    const response = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${RESEND_API_KEY}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-            from: 'Trakky <onboarding@resend.dev>',
-            to: [toEmail],
-            subject: 'Trakky — Your Verification Code',
-            html: `
-                <div style="font-family:sans-serif;text-align:center;padding:40px 20px;background:#0f0f0f;">
-                    <h2 style="color:#7c5cfc;margin-bottom:8px;">Trakky</h2>
-                    <p style="color:#aaa;margin-bottom:24px;">Your AI Hairstyle verification code:</p>
-                    <div style="display:inline-block;background:#1a1a2e;border:2px solid #7c5cfc;border-radius:12px;padding:20px 40px;">
-                        <h1 style="letter-spacing:12px;color:#fff;font-size:36px;margin:0;">${otp}</h1>
-                    </div>
-                    <p style="color:#666;margin-top:24px;font-size:13px;">This code expires in 5 minutes.</p>
-                </div>
-            `
-        })
-    });
-
-    if (!response.ok) {
-        const errBody = await response.text();
-        throw new Error(`Resend API error ${response.status}: ${errBody}`);
+// ==================== EMAIL via Gmail SMTP ====================
+// Uses port 465 (SSL) — more reliable than 587 STARTTLS
+// SMTP_EMAIL and SMTP_PASSWORD must be set in Railway env vars
+// SMTP_PASSWORD must be a Gmail App Password (16 chars, no spaces)
+// Generate one: myaccount.google.com/apppasswords
+const transporter = nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,   // SSL from the start (port 465)
+    auth: {
+        user: process.env.SMTP_EMAIL,
+        pass: (process.env.SMTP_PASSWORD || '').replace(/\s/g, '') // strip any spaces from App Password
     }
-    return await response.json();
+});
+
+// Verify SMTP on startup so we know early if creds are wrong
+transporter.verify((err) => {
+    if (err) console.error('[SMTP] ❌ Connection FAILED:', err.message);
+    else console.log('[SMTP] ✅ Gmail ready to send emails via', process.env.SMTP_EMAIL);
+});
+
+async function sendOtpEmail(toEmail, otp) {
+    if (!process.env.SMTP_EMAIL || !process.env.SMTP_PASSWORD) {
+        throw new Error('SMTP_EMAIL and SMTP_PASSWORD env vars not set in Railway.');
+    }
+    await transporter.sendMail({
+        from: `"Trakky" <${process.env.SMTP_EMAIL}>`,
+        to: toEmail,
+        subject: 'Trakky — Your Verification Code',
+        html: `
+            <div style="font-family:sans-serif;text-align:center;padding:40px 20px;background:#0f0f0f;">
+                <h2 style="color:#7c5cfc;margin-bottom:8px;">Trakky</h2>
+                <p style="color:#aaa;margin-bottom:24px;">Your AI Hairstyle verification code:</p>
+                <div style="display:inline-block;background:#1a1a2e;border:2px solid #7c5cfc;border-radius:12px;padding:20px 40px;">
+                    <h1 style="letter-spacing:12px;color:#fff;font-size:36px;margin:0;">${otp}</h1>
+                </div>
+                <p style="color:#666;margin-top:24px;font-size:13px;">This code expires in 5 minutes.</p>
+            </div>
+        `
+    });
 }
 // ====================================================================
 
