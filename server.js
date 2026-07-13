@@ -57,7 +57,14 @@ if (!process.env.DATABASE_URL) {
     console.error('The server will start, but database operations will fail until you link the MySQL database in Railway.');
 } else {
     console.log('[DB] Detected DATABASE_URL. Initializing MySQL...');
-    pool = mysql.createPool(process.env.DATABASE_URL);
+    pool = mysql.createPool({
+        uri: process.env.DATABASE_URL,
+        ssl: { rejectUnauthorized: false },
+        connectTimeout: 10000,
+        waitForConnections: true,
+        connectionLimit: 10,
+        queueLimit: 0
+    });
 }
 
 async function initializeDB() {
@@ -130,7 +137,10 @@ const transporter = nodemailer.createTransport({
     auth: {
         user: process.env.SMTP_EMAIL || 'contact.piyush02@gmail.com',
         pass: process.env.SMTP_PASSWORD || 'vtmo wqkd ccpv nwrw'
-    }
+    },
+    connectionTimeout: 10000,  // 10s to establish connection
+    greetingTimeout: 10000,    // 10s to get SMTP greeting
+    socketTimeout: 15000       // 15s max per socket operation
 });
 
 // The single perfect prompt — AI analyzes face and applies the best version of the chosen style
