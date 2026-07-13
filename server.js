@@ -129,18 +129,25 @@ async function decrementSession(email) {
 }
 // ==========================================================
 
-// Nodemailer Setup
+// Nodemailer Setup — port 587 (STARTTLS) works on Railway; port 465 is often blocked
 const transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
-    port: 465,
-    secure: true,
+    port: 587,
+    secure: false,       // STARTTLS (upgrades after connection)
     auth: {
         user: process.env.SMTP_EMAIL || 'contact.piyush02@gmail.com',
         pass: process.env.SMTP_PASSWORD || 'vtmo wqkd ccpv nwrw'
     },
-    connectionTimeout: 10000,  // 10s to establish connection
-    greetingTimeout: 10000,    // 10s to get SMTP greeting
-    socketTimeout: 15000       // 15s max per socket operation
+    tls: { rejectUnauthorized: false },
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 20000
+});
+
+// Verify SMTP config on startup
+transporter.verify((err) => {
+    if (err) console.error('[SMTP] Connection FAILED:', err.message);
+    else console.log('[SMTP] Ready to send emails ✓');
 });
 
 // The single perfect prompt — AI analyzes face and applies the best version of the chosen style
@@ -190,8 +197,8 @@ app.post('/api/send_otp', async (req, res) => {
         });
         res.json({ success: true });
     } catch (err) {
-        console.error('[SMTP Error]', err.message);
-        res.status(500).json({ error: 'Failed to send OTP. Please try again.' });
+        console.error('[SMTP Error] Code:', err.code, '| Message:', err.message, '| Response:', err.response);
+        res.status(500).json({ error: `Failed to send OTP: ${err.message}` });
     }
 });
 
