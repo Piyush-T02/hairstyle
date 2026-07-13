@@ -50,125 +50,70 @@ const { Pool } = require('pg');
 const otpStore = new Map();
 
 // ========== DATABASE CONNECTION & INITIALIZATION ==========
-let pool = null;
-if (process.env.DATABASE_URL) {
-    console.log('[DB] Detected DATABASE_URL. Initializing PostgreSQL...');
-    pool = new Pool({
-        connectionString: process.env.DATABASE_URL,
-        ssl: { rejectUnauthorized: false }
-    });
+if (!process.env.DATABASE_URL) {
+    console.error('CRITICAL ERROR: DATABASE_URL environment variable is missing.');
+    console.error('Please configure a PostgreSQL database in Railway and set DATABASE_URL.');
+    process.exit(1); // Stop the server if no database is configured
 }
 
-const DB_PATH = path.join(__dirname, 'users.json');
+console.log('[DB] Detected DATABASE_URL. Initializing PostgreSQL...');
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
+});
 
 async function initializeDB() {
-    if (pool) {
-        try {
-            await pool.query(`
-                CREATE TABLE IF NOT EXISTS users (
-                    id SERIAL PRIMARY KEY,
-                    email VARCHAR(255) UNIQUE NOT NULL,
-                    mobile VARCHAR(50),
-                    name VARCHAR(255),
-                    location VARCHAR(255),
-                    sessions INT DEFAULT 5,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-            `);
-            console.log('[DB] PostgreSQL "users" table is ready.');
-        } catch (err) {
-            console.error('[DB] PostgreSQL Table creation failed:', err.message);
-        }
-    } else {
-        if (!fs.existsSync(DB_PATH)) {
-            fs.writeFileSync(DB_PATH, JSON.stringify([], null, 2));
-        }
-        console.log('[DB] Local JSON database is ready.');
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                email VARCHAR(255) UNIQUE NOT NULL,
+                mobile VARCHAR(50),
+                name VARCHAR(255),
+                location VARCHAR(255),
+                sessions INT DEFAULT 5,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+        console.log('[DB] PostgreSQL "users" table is ready.');
+    } catch (err) {
+        console.error('[DB] PostgreSQL Table creation failed:', err.message);
     }
 }
 initializeDB();
 
-function getUsers() {
-    try {
-        return JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
-    } catch {
-        return [];
-    }
-}
-
-function saveUsers(users) {
-    fs.writeFileSync(DB_PATH, JSON.stringify(users, null, 2));
-}
-
 // Unified Database Helpers
 async function findUser(email, mobile) {
-    if (pool) {
-        let query = 'SELECT * FROM users WHERE email = $1';
-        let params = [email];
-        if (mobile) {
-            query += ' OR mobile = $2';
-            params.push(mobile);
-        }
-        const res = await pool.query(query, params);
-        return res.rows[0] || null;
-    } else {
-        const users = getUsers();
-        return users.find(u => u.email === email || (mobile && u.mobile === mobile)) || null;
+    let query = 'SELECT * FROM users WHERE email = $1';
+    let params = [email];
+    if (mobile) {
+        query += ' OR mobile = $2';
+        params.push(mobile);
     }
+    const res = await pool.query(query, params);
+    return res.rows[0] || null;
 }
 
 async function checkSessions(email) {
-    if (pool) {
-        const res = await pool.query('SELECT sessions FROM users WHERE email = $1', [email]);
-        if (res.rows.length === 0) return null;
-        return res.rows[0].sessions;
-    } else {
-        const users = getUsers();
-        const user = users.find(u => u.email === email);
-        return user ? user.sessions : null;
-    }
+    const res = await pool.query('SELECT sessions FROM users WHERE email = $1', [email]);
+    if (res.rows.length === 0) return null;
+    return res.rows[0].sessions;
 }
 
 async function createUser(email, mobile, name, location) {
-    if (pool) {
-        const res = await pool.query(
-            'INSERT INTO users (email, mobile, name, location, sessions) VALUES ($1, $2, $3, $4, 5) RETURNING *',
-            [email, mobile || '', name || '', location || '']
-        );
-        return res.rows[0];
-    } else {
-        const users = getUsers();
-        const newUser = {
-            email,
-            mobile: mobile || '',
-            name: name || '',
-            location: location || '',
-            sessions: 5,
-            createdAt: new Date().toISOString()
-        };
-        users.push(newUser);
-        saveUsers(users);
-        return newUser;
-    }
+    const res = await pool.query(
+        'INSERT INTO users (email, mobile, name, location, sessions) VALUES ($1, $2, $3, $4, 5) RETURNING *',
+        [email, mobile || '', name || '', location || '']
+    );
+    return res.rows[0];
 }
 
 async function decrementSession(email) {
-    if (pool) {
-        const res = await pool.query(
-            'UPDATE users SET sessions = sessions - 1 WHERE email = $1 RETURNING sessions',
-            [email]
-        );
-        return res.rows[0] ? res.rows[0].sessions : 0;
-    } else {
-        const users = getUsers();
-        const userIndex = users.findIndex(u => u.email === email);
-        if (userIndex !== -1) {
-            users[userIndex].sessions = Math.max(0, users[userIndex].sessions - 1);
-            saveUsers(users);
-            return users[userIndex].sessions;
-        }
-        return 0;
-    }
+    const res = await pool.query(
+        'UPDATE users SET sessions = sessions - 1 WHERE email = $1 RETURNING sessions',
+        [email]
+    );
+    return res.rows[0] ? res.rows[0].sessions : 0;
 }
 // ==========================================================
 
