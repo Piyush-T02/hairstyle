@@ -50,16 +50,18 @@ const mysql = require('mysql2/promise');
 const otpStore = new Map();
 
 // ========== DATABASE CONNECTION & INITIALIZATION ==========
+let pool = null;
+
 if (!process.env.DATABASE_URL) {
-    console.error('CRITICAL ERROR: DATABASE_URL environment variable is missing.');
-    console.error('Please configure a MySQL database in Railway and set DATABASE_URL.');
-    process.exit(1); // Stop the server if no database is configured
+    console.error('CRITICAL WARNING: DATABASE_URL environment variable is missing.');
+    console.error('The server will start, but database operations will fail until you link the MySQL database in Railway.');
+} else {
+    console.log('[DB] Detected DATABASE_URL. Initializing MySQL...');
+    pool = mysql.createPool(process.env.DATABASE_URL);
 }
 
-console.log('[DB] Detected DATABASE_URL. Initializing MySQL...');
-const pool = mysql.createPool(process.env.DATABASE_URL);
-
 async function initializeDB() {
+    if (!pool) return;
     try {
         await pool.query(`
             CREATE TABLE IF NOT EXISTS users (
@@ -81,6 +83,7 @@ initializeDB();
 
 // Unified Database Helpers
 async function findUser(email, mobile) {
+    if (!pool) throw new Error('Database not connected. Please add MySQL in Railway.');
     let query = 'SELECT * FROM users WHERE email = ?';
     let params = [email];
     if (mobile) {
@@ -92,12 +95,14 @@ async function findUser(email, mobile) {
 }
 
 async function checkSessions(email) {
+    if (!pool) throw new Error('Database not connected. Please add MySQL in Railway.');
     const [rows] = await pool.execute('SELECT sessions FROM users WHERE email = ?', [email]);
     if (rows.length === 0) return null;
     return rows[0].sessions;
 }
 
 async function createUser(email, mobile, name, location) {
+    if (!pool) throw new Error('Database not connected. Please add MySQL in Railway.');
     const [result] = await pool.execute(
         'INSERT INTO users (email, mobile, name, location, sessions) VALUES (?, ?, ?, ?, 5)',
         [email, mobile || '', name || '', location || '']
@@ -107,6 +112,7 @@ async function createUser(email, mobile, name, location) {
 }
 
 async function decrementSession(email) {
+    if (!pool) throw new Error('Database not connected. Please add MySQL in Railway.');
     await pool.execute(
         'UPDATE users SET sessions = sessions - 1 WHERE email = ?',
         [email]
