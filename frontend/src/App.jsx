@@ -341,10 +341,10 @@ export default function App() {
               <div className="mt-4 mb-4">
                 <h4 className="section-label">Select Gender</h4>
                 <div className="gender-row">
-                  <button className={`gender-btn ${gender === 'male' ? 'active' : ''}`} onClick={() => setGender('male')}>
+                  <button className={`gender-btn ${gender === 'male' ? 'active' : ''}`} onClick={() => { setGender('male'); setSelectedStyle('Auto-Select'); }}>
                     <i className="fa-solid fa-mars"></i> Male
                   </button>
-                  <button className={`gender-btn ${gender === 'female' ? 'active' : ''}`} onClick={() => setGender('female')}>
+                  <button className={`gender-btn ${gender === 'female' ? 'active' : ''}`} onClick={() => { setGender('female'); setSelectedStyle('Auto-Select'); }}>
                     <i className="fa-solid fa-venus"></i> Female
                   </button>
                 </div>
@@ -355,6 +355,9 @@ export default function App() {
                 <div>
                   <h4 className="section-label">Choose Your Style</h4>
                   <div className="style-grid">
+                    <div className={`s-card ${selectedStyle === 'Auto-Select' ? 'selected' : ''}`} onClick={() => setSelectedStyle('Auto-Select')}>
+                      <h5>✨ Auto-Select (AI Choice)</h5>
+                    </div>
                     {(gender === 'male' ? MALE_STYLES : FEMALE_STYLES).map(s => (
                       <div key={s} className={`s-card ${selectedStyle === s ? 'selected' : ''}`} onClick={() => setSelectedStyle(s)}>
                         <h5>{s}</h5>
@@ -364,7 +367,7 @@ export default function App() {
 
                   {selectedStyle && (
                     <button className="btn-primary" onClick={handleGenerate}>
-                      <i className="fa-solid fa-wand-magic-sparkles"></i> Generate My Look
+                      Generate My Look
                     </button>
                   )}
                 </div>

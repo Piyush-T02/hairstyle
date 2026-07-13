@@ -172,15 +172,20 @@ async function sendOtpEmail(toEmail, otp) {
 // ====================================================================
 
 // The single perfect prompt — AI analyzes face and applies the best version of the chosen style
-const HAIRSTYLE_PROMPT = (gender, style) =>
-    `You are a world-class celebrity hairstylist. This is a ${gender} client's photo. ` +
-    `Apply a perfect, photorealistic "${style}" hairstyle that flatters their exact face shape, skin tone, and features. ` +
-    `CRITICAL RULES: ` +
-    `1. Edit ONLY the hair on the scalp. ` +
-    `2. The face, eyes, skin, clothing, background, and lighting MUST remain 100% identical. ` +
-    `3. The result must look like a real salon photo, not AI-generated. ` +
-    `4. Make the hair look natural, volumetric, and perfectly styled. ` +
-    `Output only the photorealistic edited image.`;
+const HAIRSTYLE_PROMPT = (gender, style) => {
+    const styleDesc = style === 'Auto-Select'
+        ? `trendiest, most modern, and extremely flattering premium hairstyle that perfectly matches their specific face shape, jawline, skin tone, and facial features`
+        : `perfectly styled "${style}" hairstyle that flatters their exact face shape, skin tone, and features`;
+
+    return `You are a world-class celebrity hairstylist. This is a ${gender} client's photo. ` +
+        `Apply a perfect, photorealistic ${styleDesc}. ` +
+        `CRITICAL RULES: ` +
+        `1. Edit ONLY the hair on the scalp. ` +
+        `2. The face, eyes, skin, clothing, background, and lighting MUST remain 100% identical. ` +
+        `3. The result must look like a real salon photo, not AI-generated. ` +
+        `4. Make the hair look natural, volumetric, and perfectly styled. ` +
+        `Output only the photorealistic edited image.`;
+};
 
 // ==================== ROUTES ====================
 
