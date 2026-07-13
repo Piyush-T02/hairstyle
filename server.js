@@ -1,7 +1,6 @@
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
-const nodemailer = require('nodemailer');
 const fs = require('fs');
 const path = require('path');
 const OpenAI = require('openai');
@@ -129,26 +128,42 @@ async function decrementSession(email) {
 }
 // ==========================================================
 
-// Nodemailer Setup — port 587 (STARTTLS) works on Railway; port 465 is often blocked
-const transporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 587,
-    secure: false,       // STARTTLS (upgrades after connection)
-    auth: {
-        user: process.env.SMTP_EMAIL || 'contact.piyush02@gmail.com',
-        pass: process.env.SMTP_PASSWORD || 'vtmo wqkd ccpv nwrw'
-    },
-    tls: { rejectUnauthorized: false },
-    connectionTimeout: 15000,
-    greetingTimeout: 15000,
-    socketTimeout: 20000
-});
+// ==================== EMAIL via Resend HTTP API ====================
+// Resend works via HTTPS (port 443) — never blocked on Railway/cloud
+async function sendOtpEmail(toEmail, otp) {
+    const RESEND_API_KEY = process.env.RESEND_API_KEY;
+    if (!RESEND_API_KEY) throw new Error('RESEND_API_KEY environment variable is not set in Railway.');
 
-// Verify SMTP config on startup
-transporter.verify((err) => {
-    if (err) console.error('[SMTP] Connection FAILED:', err.message);
-    else console.log('[SMTP] Ready to send emails ✓');
-});
+    const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${RESEND_API_KEY}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            from: 'Trakky <onboarding@resend.dev>',
+            to: [toEmail],
+            subject: 'Trakky — Your Verification Code',
+            html: `
+                <div style="font-family:sans-serif;text-align:center;padding:40px 20px;background:#0f0f0f;">
+                    <h2 style="color:#7c5cfc;margin-bottom:8px;">Trakky</h2>
+                    <p style="color:#aaa;margin-bottom:24px;">Your AI Hairstyle verification code:</p>
+                    <div style="display:inline-block;background:#1a1a2e;border:2px solid #7c5cfc;border-radius:12px;padding:20px 40px;">
+                        <h1 style="letter-spacing:12px;color:#fff;font-size:36px;margin:0;">${otp}</h1>
+                    </div>
+                    <p style="color:#666;margin-top:24px;font-size:13px;">This code expires in 5 minutes.</p>
+                </div>
+            `
+        })
+    });
+
+    if (!response.ok) {
+        const errBody = await response.text();
+        throw new Error(`Resend API error ${response.status}: ${errBody}`);
+    }
+    return await response.json();
+}
+// ====================================================================
 
 // The single perfect prompt — AI analyzes face and applies the best version of the chosen style
 const HAIRSTYLE_PROMPT = (gender, style) =>
@@ -184,20 +199,10 @@ app.post('/api/send_otp', async (req, res) => {
     otpStore.set(email, { otp, expires: Date.now() + 5 * 60 * 1000 });
 
     try {
-        await transporter.sendMail({
-            from: '"Trakky" <contact.piyush02@gmail.com>',
-            to: email,
-            subject: 'Trakky — Your Verification Code',
-            html: `<div style="font-family:sans-serif;text-align:center;padding:40px 20px;">
-                <h2 style="color:#7c5cfc;">Trakky</h2>
-                <p>Your verification code is:</p>
-                <h1 style="letter-spacing:8px;color:#7c5cfc;">${otp}</h1>
-                <p style="color:#888;">This code expires in 5 minutes.</p>
-            </div>`
-        });
+        await sendOtpEmail(email, otp);
         res.json({ success: true });
     } catch (err) {
-        console.error('[SMTP Error] Code:', err.code, '| Message:', err.message, '| Response:', err.response);
+        console.error('[Email Error]', err.message);
         res.status(500).json({ error: `Failed to send OTP: ${err.message}` });
     }
 });
