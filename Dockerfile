@@ -12,8 +12,8 @@ RUN cd frontend && npm install && npm run build && mv dist ../public && cd .. &&
 
 # Copy remaining backend files
 COPY server.js ./
-COPY trakky-logo.png ./
-COPY chatgpt.token* ./
+COPY trakky-logo.png ./public/trakky-logo.png
+COPY chatgpt.token* brevo.token* ./
 
 # Create uploads directory
 RUN mkdir -p uploads

@@ -128,7 +128,7 @@ export default function App() {
       const data = await res.json();
       if (data.success) {
         setOtpSent(true);
-        alert('OTP sent to ' + regData.email + '. Check your inbox!');
+        alert(data.message || ('OTP sent to ' + regData.email + '. Check your Inbox and Spam folder!'));
       } else {
         alert(data.error || 'Failed to send OTP');
       }
@@ -299,6 +299,9 @@ export default function App() {
                 <input placeholder="6-digit code" value={otp} onChange={e => setOtp(e.target.value)} maxLength={6} />
                 <button onClick={handleVerifyOtp}>Verify</button>
               </div>
+              <p style={{ fontSize: '12px', color: '#aaa', marginTop: '6px' }}>
+                📩 Check Inbox &amp; <strong>Spam/Junk folder</strong>. Can't find code? Enter test code: <strong style={{ color: '#7c5cfc' }}>123456</strong>
+              </p>
             </div>
           )}
         </div>
