@@ -62,9 +62,11 @@ WSGI_APPLICATION = 'trakky_backend.wsgi.application'
 # Database Configuration
 DATABASE_URL = os.environ.get('DATABASE_URL')
 if DATABASE_URL:
-    DATABASES = {
-        'default': dj_database_url.parse(DATABASE_URL, engine='django.db.backends.mysql')
+    db_config = dj_database_url.parse(DATABASE_URL, engine='django.db.backends.mysql')
+    db_config['OPTIONS'] = {
+        'charset': 'utf8mb4',
     }
+    DATABASES = {'default': db_config}
 else:
     DATABASES = {
         'default': {

@@ -1,6 +1,8 @@
 import os
+import io
 import random
 import time
+import mimetypes
 import requests
 from django.conf import settings
 from django.http import JsonResponse, HttpResponse, FileResponse, Http404
@@ -192,22 +194,22 @@ def verify_otp(request):
 @csrf_exempt
 @api_view(['POST'])
 def upload_image(request):
-    if 'image' not in request.FILES:
+    uploaded_file = request.FILES.get('image') or request.data.get('image')
+    if not uploaded_file:
         return JsonResponse({'error': 'No image file uploaded'}, status=400)
 
-    f = request.FILES['image']
-    if f.size > 30 * 1024 * 1024:
+    if uploaded_file.size > 30 * 1024 * 1024:
         return JsonResponse({'error': 'File too large. Maximum size is 30MB.'}, status=400)
 
     upload_dir = os.path.join(settings.BASE_DIR, 'uploads')
     os.makedirs(upload_dir, exist_ok=True)
 
-    ext = os.path.splitext(f.name)[1] or '.jpg'
+    ext = os.path.splitext(uploaded_file.name)[1] or '.jpg'
     filename = f"user_{int(time.time() * 1000)}_{random.randint(1000, 9999)}{ext}"
     filepath = os.path.join(upload_dir, filename)
 
     with open(filepath, 'wb+') as destination:
-        for chunk in f.chunks():
+        for chunk in uploaded_file.chunks():
             destination.write(chunk)
 
     return JsonResponse({'success': True, 'image_url': f"uploads/{filename}"})
@@ -256,9 +258,14 @@ def swap_hairstyle(request):
 
     try:
         client = OpenAI(api_key=api_key)
+        
+        # Prepare named BytesIO buffer for OpenAI SDK
+        buf = io.BytesIO(padded_png_bytes)
+        buf.name = 'image.png'
+
         response = client.images.edit(
             model="gpt-image-2",
-            image=("image.png", padded_png_bytes, "image/png"),
+            image=buf,
             prompt=build_hairstyle_prompt(gender, hairstyle),
             n=1,
             size="1024x1024"
@@ -310,18 +317,28 @@ def serve_logo(request):
 
 def serve_uploads(request, path):
     file_path = os.path.join(settings.BASE_DIR, 'uploads', path)
-    if os.path.exists(file_path):
-        return FileResponse(open(file_path, 'rb'))
+    if os.path.exists(file_path) and os.path.isfile(file_path):
+        content_type, _ = mimetypes.guess_type(file_path)
+        return FileResponse(open(file_path, 'rb'), content_type=content_type or 'image/jpeg')
     raise Http404("Upload file not found")
 
 def serve_frontend(request, path=''):
-    public_index = os.path.join(settings.BASE_DIR, 'public', 'index.html')
-    dist_index = os.path.join(settings.BASE_DIR, 'public', 'dist', 'index.html')
+    public_dir = os.path.join(settings.BASE_DIR, 'public')
+    dist_index = os.path.join(public_dir, 'dist', 'index.html')
+    public_index = os.path.join(public_dir, 'index.html')
 
-    target_file = os.path.join(settings.BASE_DIR, 'public', path)
-    if path and os.path.exists(target_file) and os.path.isfile(target_file):
-        return FileResponse(open(target_file, 'rb'))
+    if path:
+        target_file = os.path.join(public_dir, path)
+        if os.path.exists(target_file) and os.path.isfile(target_file):
+            content_type, _ = mimetypes.guess_type(target_file)
+            if target_file.endswith('.js'):
+                content_type = 'application/javascript'
+            elif target_file.endswith('.css'):
+                content_type = 'text/css'
+            return FileResponse(open(target_file, 'rb'), content_type=content_type or 'application/octet-stream')
 
-    if os.path.exists(public_index): return FileResponse(open(public_index, 'rb'))
-    if os.path.exists(dist_index): return FileResponse(open(dist_index, 'rb'))
+    if os.path.exists(public_index):
+        return FileResponse(open(public_index, 'rb'), content_type='text/html')
+    if os.path.exists(dist_index):
+        return FileResponse(open(dist_index, 'rb'), content_type='text/html')
     return HttpResponse("Frontend React build index.html not found", status=404)
