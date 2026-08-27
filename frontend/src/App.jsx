@@ -65,9 +65,7 @@ export default function App() {
 
   // Registration
   const [regData, setRegData] = useState({ name: '', location: '', mobile: '', email: '' });
-  const [otpSent, setOtpSent] = useState(false);
-  const [otpLoading, setOtpLoading] = useState(false);
-  const [otp, setOtp] = useState('');
+  const [regLoading, setRegLoading] = useState(false);
 
   // Upload
   const [imageFile, setImageFile] = useState(null);   // local blob URL for preview
@@ -79,7 +77,8 @@ export default function App() {
 
   // Processing
   const [quoteIdx, setQuoteIdx] = useState(0);
-  const [result, setResult] = useState(null);    // single result object { url, style_name }
+  const [results, setResults] = useState([]);    // array of { url, style_name }
+  const [heroIdx, setHeroIdx] = useState(0);      // index of result shown in main hero view
 
   // Fullscreen
   const [fullScreenImg, setFullScreenImg] = useState(null);
@@ -102,55 +101,31 @@ export default function App() {
     setImageUrl('');
     setGender('');
     setSelectedStyle('');
-    setResult(null);
+    setResults([]);
+    setHeroIdx(0);
   };
 
   const handleStart = () => {
     if (user && user.sessions > 0) {
       setStep('upload');
     } else if (user && user.sessions <= 0) {
-      alert("You've used all 5 free sessions. Thank you for trying Trakky!");
+      alert("You've used all your free sessions. Thank you for trying Trakky!");
     } else {
       setStep('register');
     }
   };
 
-  // ============= OTP =============
-  const handleSendOtp = async () => {
-    if (!regData.email || !regData.email.includes('@')) return alert('Please enter a valid email.');
-    setOtpLoading(true);
+  // ============= REGISTRATION (Direct) =============
+  const handleRegister = async (e) => {
+    if (e) e.preventDefault();
+    if (!regData.name.trim()) return alert('Please enter your full name.');
+    if (!regData.email || !regData.email.includes('@')) return alert('Please enter a valid email address.');
+    setRegLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/send_otp`, {
+      const res = await fetch(`${API_BASE}/api/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: regData.email })
-      });
-      const data = await res.json();
-      if (data.success) {
-        setOtpSent(true);
-        alert(data.message || ('OTP sent to ' + regData.email + '. Check your Inbox and Spam folder!'));
-      } else {
-        alert(data.error || 'Failed to send OTP');
-      }
-    } catch {
-      alert('Network error. Please try again.');
-    }
-    setOtpLoading(false);
-  };
-
-  const handleVerifyOtp = async () => {
-    if (!otp || otp.length < 4) return alert('Please enter the OTP.');
-    try {
-      const res = await fetch(`${API_BASE}/api/verify_otp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: regData.email,
-          mobile: regData.mobile,
-          name: regData.name,
-          location: regData.location,
-          otp
-        })
+        body: JSON.stringify(regData)
       });
       const data = await res.json();
       if (data.success && data.user) {
@@ -158,11 +133,12 @@ export default function App() {
         setUser(data.user);
         setStep('upload');
       } else {
-        alert(data.error || 'Verification failed');
+        alert(data.error || 'Registration failed. Please try again.');
       }
     } catch {
-      alert('Network error. Please try again.');
+      alert('Network error. Please check your connection and try again.');
     }
+    setRegLoading(false);
   };
 
   // ============= UPLOAD (Gallery + Camera) =============
@@ -193,7 +169,11 @@ export default function App() {
     }
   };
 
-  const handleFileChange = (e) => doUpload(e.target.files[0]);
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    e.target.value = ''; // reset so same file can be re-selected
+    doUpload(file);
+  };
 
   // ============= GENERATE =============
   const handleGenerate = async () => {
@@ -214,8 +194,9 @@ export default function App() {
         })
       });
       const data = await res.json();
-      if (data.success && data.result) {
-        setResult(data.result);
+      if (data.success && data.results && data.results.length > 0) {
+        setResults(data.results);
+        setHeroIdx(0); // reset hero to first image for new results
         // Update local sessions count
         const updatedUser = { ...user, sessions: data.sessionsRemaining };
         localStorage.setItem('trakky_user', JSON.stringify(updatedUser));
@@ -267,44 +248,51 @@ export default function App() {
 
       {/* =================== REGISTER =================== */}
       {step === 'register' && (
-        <div className="reg-form">
-          <h2 className="step-title">Get Started</h2>
-          <p className="step-sub">Verify your email to unlock 5 free AI hairstyle sessions.</p>
+        <form className="reg-form" onSubmit={handleRegister}>
+          <h2 className="step-title">Enter Your Details</h2>
+          <p className="step-sub">Fill in your details to unlock 5 free AI hairstyle sessions.</p>
 
           <div className="form-group">
             <label>Full Name</label>
-            <input placeholder="Your name" value={regData.name} onChange={e => setRegData({...regData, name: e.target.value})} />
+            <input
+              placeholder="e.g. Rahul Sharma"
+              value={regData.name}
+              onChange={e => setRegData({...regData, name: e.target.value})}
+              required
+            />
           </div>
           <div className="form-group">
-            <label>Location</label>
-            <input placeholder="City" value={regData.location} onChange={e => setRegData({...regData, location: e.target.value})} />
+            <label>Location / City</label>
+            <input
+              placeholder="e.g. Mumbai"
+              value={regData.location}
+              onChange={e => setRegData({...regData, location: e.target.value})}
+            />
           </div>
           <div className="form-group">
             <label>Mobile Number</label>
-            <input placeholder="10-digit mobile" type="tel" value={regData.mobile} onChange={e => setRegData({...regData, mobile: e.target.value})} />
+            <input
+              placeholder="10-digit mobile number"
+              type="tel"
+              value={regData.mobile}
+              onChange={e => setRegData({...regData, mobile: e.target.value})}
+            />
           </div>
           <div className="form-group">
-            <label>Email (Gmail)</label>
-            <div className="otp-row">
-              <input placeholder="your@gmail.com" type="email" value={regData.email} onChange={e => setRegData({...regData, email: e.target.value})} disabled={otpSent} />
-              <button onClick={handleSendOtp} disabled={otpSent || otpLoading}>
-                {otpLoading ? '...' : otpSent ? 'Sent ✓' : 'Send OTP'}
-              </button>
-            </div>
+            <label>Email Address</label>
+            <input
+              placeholder="your@email.com"
+              type="email"
+              value={regData.email}
+              onChange={e => setRegData({...regData, email: e.target.value})}
+              required
+            />
           </div>
-          {otpSent && (
-            <div className="form-group">
-              <label>Verification Code</label>
-              <div className="otp-row">
-                <input placeholder="6-digit code" value={otp} onChange={e => setOtp(e.target.value)} maxLength={6} />
-                <button onClick={handleVerifyOtp}>Verify</button>
-              </div>
-              <p style={{ fontSize: '12px', color: '#aaa', marginTop: '6px' }}>
-                📩 Check Inbox &amp; <strong>Spam/Junk folder</strong>. Can't find code? Enter test code: <strong style={{ color: '#7c5cfc' }}>123456</strong>
-              </p>
-            </div>
-          )}
-        </div>
+
+          <button type="submit" className="btn-primary" disabled={regLoading} style={{ marginTop: '24px' }}>
+            {regLoading ? 'Starting Session...' : 'Continue to Virtual Salon →'}
+          </button>
+        </form>
       )}
 
       {/* =================== UPLOAD =================== */}
@@ -316,8 +304,8 @@ export default function App() {
           {!imageFile ? (
             <div className="upload-options">
               {/* Hidden file inputs */}
-              <input ref={fileRef} type="file" accept="image/*" hidden onChange={handleFileChange} />
-              <input ref={cameraRef} type="file" accept="image/*" capture="user" hidden onChange={handleFileChange} />
+              <input ref={fileRef} type="file" accept="image/*" hidden onChange={handleFileChange} onClick={e => { e.target.value = ''; }} />
+              <input ref={cameraRef} type="file" accept="image/*" capture="user" hidden onChange={handleFileChange} onClick={e => { e.target.value = ''; }} />
 
               <div className="upload-btn-group">
                 <button className="upload-option" onClick={() => fileRef.current?.click()}>
@@ -335,7 +323,7 @@ export default function App() {
             <div className="text-center">
               <img src={imageFile} className="preview-img" alt="Your photo" />
               <div className="mt-4">
-                <button className="btn-secondary" onClick={() => { setImageFile(null); setImageUrl(''); setGender(''); setSelectedStyle(''); }}>
+                <button className="btn-secondary" onClick={() => { setImageFile(null); setImageUrl(''); setGender(''); setSelectedStyle(''); setResults([]); }}>
                   <i className="fa-solid fa-xmark"></i> Remove & Re-upload
                 </button>
               </div>
@@ -390,32 +378,72 @@ export default function App() {
         </div>
       )}
 
-      {/* =================== RESULT (Single Image) =================== */}
-      {step === 'results' && result && (
+      {/* =================== RESULTS (Hero + Thumbnails) =================== */}
+      {step === 'results' && results.length > 0 && (
         <div className="result-section">
-          <h2 className="step-title">Your New Look</h2>
-          <p className="step-sub">{selectedStyle} — Click the image to view full size</p>
+          <h2 className="step-title">Your New Look{results.length > 1 ? 's' : ''}</h2>
+          <p className="step-sub">{selectedStyle} — Tap main image or thumbnail for full size view</p>
 
-          <div className="result-card">
+          {/* Main Hero Card */}
+          <div className="result-hero-card">
             <img
-              src={`${API_BASE}/${result.url}`}
-              alt={result.style_name}
-              className="result-image"
-              onClick={() => setFullScreenImg(`${API_BASE}/${result.url}`)}
+              src={`${API_BASE}/${results[heroIdx].url}`}
+              alt={results[heroIdx].style_name}
+              className="result-hero-img"
+              onClick={() => setFullScreenImg(`${API_BASE}/${results[heroIdx].url}`)}
             />
           </div>
 
+          {/* Thumbnail Strip — shows all variations */}
+          {results.length > 1 && (
+            <div className="result-thumbs">
+              {results.map((r, i) => (
+                <div
+                  key={i}
+                  className={`result-thumb ${i === (heroIdx) ? 'active' : ''}`}
+                  onClick={() => {
+                    setHeroIdx(i);
+                    setFullScreenImg(`${API_BASE}/${r.url}`);
+                  }}
+                >
+                  <img src={`${API_BASE}/${r.url}`} alt={`Variation ${i + 1}`} />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Action buttons */}
           <div className="result-actions">
-            <a className="btn-download" href={`${API_BASE}/${result.url}`} download={`trakky_${selectedStyle.toLowerCase().replace(/\s/g, '_')}.jpg`}>
-              <i className="fa-solid fa-download"></i> Download
+            <a
+              className="btn-download"
+              href={`${API_BASE}/${results[heroIdx].url}`}
+              download={`trakky_${selectedStyle.toLowerCase().replace(/\s/g, '_')}_${(heroIdx) + 1}.jpg`}
+            >
+              <i className="fa-solid fa-download"></i> Download Image
             </a>
-            <button className="btn-book" onClick={() => alert(`Booking request for "${selectedStyle}" sent! A salon near you will contact you soon.`)}>
-              <i className="fa-solid fa-calendar-check"></i> Book This Style
-            </button>
+            <a
+              className="btn-book"
+              href="https://trakky.in"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <i className="fa-solid fa-calendar-check"></i> Book This Style on Trakky
+            </a>
           </div>
 
           <div className="text-center mt-4">
-            <button className="btn-secondary" onClick={() => { setImageFile(null); setImageUrl(''); setGender(''); setSelectedStyle(''); setResult(null); setStep('upload'); }}>
+            <button
+              className="btn-secondary"
+              onClick={() => {
+                setImageFile(null);
+                setImageUrl('');
+                setGender('');
+                setSelectedStyle('');
+                setResults([]);
+                setHeroIdx(0);
+                setStep('upload');
+              }}
+            >
               <i className="fa-solid fa-arrow-rotate-right"></i> Try Another Style ({user?.sessions} left)
             </button>
           </div>

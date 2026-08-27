@@ -1,0 +1,11 @@
+Django>=6.1
+djangorestframework>=3.18.0
+django-cors-headers>=4.9.0
+openai>=3.5.0
+Pillow>=12.3.0
+opencv-python-headless>=5.0.0
+pymysql>=1.2.0
+python-dotenv>=1.2.3
+requests>=2.34.2
+gunicorn>=26.2.0
+dj-database-url>=3.1.2
