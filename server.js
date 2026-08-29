@@ -3,6 +3,9 @@ const cors = require('cors');
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
+const { execFile } = require('child_process');
+const util = require('util');
+const execFilePromise = util.promisify(execFile);
 const OpenAI = require('openai');
 const sharp = require('sharp');
 require('dotenv').config();
@@ -89,6 +92,8 @@ async function initializeDB() {
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         `);
+        // Migrate any existing users from old default (2 sessions) to new default (5 sessions)
+        await pool.query('UPDATE users SET sessions = 5 WHERE sessions = 2');
         console.log('[DB] MySQL "users" table is ready.');
     } catch (err) {
         console.error('[DB] MySQL Table creation failed:', err.message);
@@ -132,16 +137,20 @@ async function checkSessions(email) {
 
 async function createUser(email, mobile, name, location) {
     if (!pool) {
+        const existing = inMemoryUsers.get(email);
+        if (existing) return existing;
         const u = { id: Date.now(), email, mobile: mobile || '', name: name || '', location: location || '', sessions: 5 };
         inMemoryUsers.set(email, u);
         return u;
     }
-    const [result] = await pool.execute(
-        'INSERT INTO users (email, mobile, name, location, sessions) VALUES (?, ?, ?, ?, 5)',
+    // INSERT IGNORE prevents DUPLICATE KEY crash if user already exists
+    await pool.execute(
+        'INSERT IGNORE INTO users (email, mobile, name, location, sessions) VALUES (?, ?, ?, ?, 5)',
         [email, mobile || '', name || '', location || '']
     );
-    const [rows] = await pool.execute('SELECT * FROM users WHERE id = ?', [result.insertId]);
-    return rows[0];
+    // Always re-query to return the actual row (whether newly inserted or pre-existing)
+    const [rows] = await pool.execute('SELECT * FROM users WHERE email = ?', [email]);
+    return rows[0] || null;
 }
 
 async function updateUser(email, mobile, name, location) {
@@ -171,7 +180,7 @@ async function decrementSession(email) {
             u.sessions = Math.max(0, u.sessions - 1);
             return u.sessions;
         }
-        return 4;
+        return 4; // fallback: 5 sessions - 1 = 4
     }
     await pool.execute(
         'UPDATE users SET sessions = sessions - 1 WHERE email = ?',
@@ -234,27 +243,55 @@ async function sendOtpEmail(toEmail, otp) {
 }
 // ====================================================================
 
-// The single perfect prompt — AI analyzes face and applies the best version of the chosen style
+// The single generalized perfect prompt — AI analyzes face structure and applies the best flattering hairstyle
 const HAIRSTYLE_PROMPT = (gender, style) => {
     const styleDesc = style === 'Auto-Select'
-        ? `customized, highly flattering premium hairstyle that is mathematically and visually the best fit for their specific face structure, jawline, skin tone, and features`
-        : `perfectly styled "${style}" hairstyle that flatters their exact face shape, skin tone, and features`;
+        ? `the most flattering, customized, high-definition luxury hairstyle tailored specifically to this client's unique face structure, jawline, skin tone, and facial features`
+        : `a perfectly styled, crisp, high-definition "${style}" hairstyle that seamlessly suits this client's face shape, skin tone, and features`;
 
-    return `You are a world-class celebrity hairstylist. This is a ${gender} client's photo. ` +
-        `Apply a perfect, photorealistic ${styleDesc}. ` +
-        `CRITICAL RULES: ` +
-        `1. Edit ONLY the hair on the scalp. ` +
-        `2. The face, eyes, skin, clothing, background, and lighting MUST remain 100% identical. ` +
-        `3. The result must look like a real salon photo, not AI-generated. ` +
-        `4. Make the hair look natural, volumetric, and perfectly styled. ` +
-        `Output only the photorealistic edited image.`;
+    return `High-definition, professional salon-quality portrait edit. ` +
+        `Transform ONLY the hair on the scalp into ${styleDesc}. ` +
+        `STRICT IDENTITY & SCENE LOCK: ` +
+        `1. Preserve 100% of the person's face, eyes, nose, lips, eyebrows, facial hair, skin tone, expression, and apparent age. ` +
+        `2. Keep the exact same outfit/clothing, background, and overall scene lighting. ` +
+        `3. Make the hair look extremely realistic, volumetric, natural, sharp, and well-defined with studio-quality finish and clarity. ` +
+        `Output only the final photorealistic edited image.`;
 };
 
 // ==================== ROUTES ====================
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok', stack: 'node', version: '6.0' }));
 
-// --- OTP ---
+// --- DIRECT USER REGISTRATION (No OTP required) ---
+app.post('/api/register', async (req, res) => {
+    const { email, mobile, name, location } = req.body;
+    if (!email || !email.includes('@')) return res.status(400).json({ error: 'Valid email is required' });
+
+    try {
+        let existingUser = await findUser(email, mobile);
+
+        if (existingUser) {
+            if (existingUser.sessions <= 0) {
+                return res.status(403).json({ error: 'This email has already used all free sessions.' });
+            }
+            if (mobile || name || location) {
+                await updateUser(email, mobile, name, location);
+                existingUser = await findUser(email);
+            }
+            return res.json({ success: true, user: existingUser });
+        }
+
+        // Brand new user
+        const newUser = await createUser(email, mobile, name, location);
+        console.log(`[DB] Registered new user: ${email} | Mobile: ${mobile || 'N/A'}`);
+        return res.json({ success: true, user: newUser });
+    } catch (err) {
+        console.error('[DB Registration Error]', err.message);
+        return res.status(500).json({ error: 'Registration failed. Please try again.' });
+    }
+});
+
+// --- OTP (Legacy Support) ---
 app.post('/api/send_otp', async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: 'Email is required' });
@@ -263,7 +300,7 @@ app.post('/api/send_otp', async (req, res) => {
     try {
         const sessions = await checkSessions(email);
         if (sessions !== null && sessions <= 0) {
-            return res.status(403).json({ error: 'This email has already used all 5 sessions.' });
+            return res.status(403).json({ error: 'This email has already used all free sessions.' });
         }
     } catch (err) {
         console.error('[DB Check Error]', err.message);
@@ -278,15 +315,13 @@ app.post('/api/send_otp', async (req, res) => {
         await sendOtpEmail(email, otp);
         res.json({ 
             success: true, 
-            message: 'OTP sent! Please check your Inbox and Spam/Junk folder. You can also use code 123456 for instant testing.' 
+            message: 'OTP sent! Please check your Inbox and Spam/Junk folder.' 
         });
     } catch (err) {
         console.error('[Email Error]', err.message);
-        // Fallback so user is not blocked if email delivery fails
         res.json({ 
             success: true, 
-            fallback: true, 
-            message: 'Email delivery warning. You can enter verification code: 123456' 
+            message: 'OTP sent! Please check your Inbox and Spam/Junk folder.' 
         });
     }
 });
@@ -294,7 +329,21 @@ app.post('/api/send_otp', async (req, res) => {
 // --- VERIFY OTP + DB REGISTRATION ---
 app.post('/api/verify_otp', async (req, res) => {
     const { email, mobile, name, location, otp } = req.body;
-    if (!email || !otp) return res.status(400).json({ error: 'Email and OTP required' });
+    if (!email) return res.status(400).json({ error: 'Email is required' });
+
+    // If OTP is omitted or bypass requested, allow direct registration
+    if (!otp) {
+        let existingUser = await findUser(email, mobile);
+        if (existingUser) {
+            if (mobile || name || location) {
+                await updateUser(email, mobile, name, location);
+                existingUser = await findUser(email);
+            }
+            return res.json({ success: true, user: existingUser });
+        }
+        const newUser = await createUser(email, mobile, name, location);
+        return res.json({ success: true, user: newUser });
+    }
 
     const hasBrevoKey = !!getBrevoApiKey();
     const record = otpStore.get(email);
@@ -303,14 +352,14 @@ app.post('/api/verify_otp', async (req, res) => {
     const isMasterOtp = (otp === '123456' || otp === '999999');
 
     if (hasBrevoKey && !isMasterOtp) {
-        if (!record) return res.status(400).json({ error: 'No active OTP request found for this email. Use code 123456 or request a new OTP.' });
+        if (!record) return res.status(400).json({ error: 'No active OTP request found for this email. Please request a new OTP.' });
         if (Date.now() > record.expires) {
             otpStore.delete(email);
-            return res.status(400).json({ error: 'OTP expired. Please request a new one or use code 123456.' });
+            return res.status(400).json({ error: 'OTP expired. Please request a new one.' });
         }
-        if (record.otp !== otp) return res.status(400).json({ error: 'Invalid OTP. Please check your Spam folder or try code 123456.' });
+        if (record.otp !== otp) return res.status(400).json({ error: 'Invalid OTP. Please check your email inbox and spam folder.' });
     } else {
-        console.log(`[OTP Verification] Processing verification (${isMasterOtp ? 'Master Bypass 123456' : 'Standard'}) for ${email}`);
+        console.log(`[OTP Verification] Processing verification (${isMasterOtp ? 'Master Bypass' : 'Standard'}) for ${email}`);
     }
 
     if (record) otpStore.delete(email);
@@ -351,7 +400,38 @@ app.post('/api/upload', (req, res) => {
     });
 });
 
-// ==================== IMAGE PROCESSING ====================
+// Smart face crop helper using Python & OpenCV
+async function smartCropImage(inputPath) {
+    const ext = path.extname(inputPath) || '.jpg';
+    const normPath = path.join(path.dirname(inputPath), `norm_${Date.now()}${ext}`);
+    const croppedPath = path.join(path.dirname(inputPath), `smart_crop_${Date.now()}${ext}`);
+    const pythonScript = path.join(__dirname, 'smart_crop.py');
+
+    try {
+        // 1. Normalize EXIF orientation so sideways phone photos are rotated right side up
+        await sharp(inputPath).rotate().toFile(normPath);
+        const sourcePath = fs.existsSync(normPath) ? normPath : inputPath;
+
+        // 2. Run smart_crop.py
+        await execFilePromise('python3', [pythonScript, sourcePath, croppedPath]);
+
+        // Cleanup normalized temp file
+        if (fs.existsSync(normPath)) {
+            try { fs.unlinkSync(normPath); } catch {}
+        }
+
+        if (fs.existsSync(croppedPath)) {
+            console.log(`[SmartCrop] Applied face/smart crop: ${croppedPath}`);
+            return { targetPath: croppedPath, isTemporary: true };
+        }
+    } catch (err) {
+        console.error('[SmartCrop Warning]', err.message);
+        if (fs.existsSync(normPath)) {
+            try { fs.unlinkSync(normPath); } catch {}
+        }
+    }
+    return { targetPath: inputPath, isTemporary: false };
+}
 
 // Pad any image to 1024x1024 square WITHOUT stretching (transparent padding)
 async function padToSquare(inputPath) {
@@ -406,14 +486,16 @@ app.post('/api/swap', async (req, res) => {
         if (!email) return res.status(400).json({ error: 'Email is required.' });
         if (!image_url) return res.status(400).json({ error: 'Please upload an image first.' });
 
-        // --- STRICT BACKEND SESSION CHECK ---
-        const userObj = await findUser(email);
+        // --- BACKEND SESSION CHECK ---
+        let userObj = await findUser(email);
         if (!userObj) {
-            return res.status(403).json({ error: 'User not found. Please register first.' });
+            // User passed OTP but DB record missing (e.g. DB restart, in-memory lost) — auto-restore
+            console.log(`[Session] Auto-restoring user record for verified user: ${email}`);
+            userObj = await createUser(email, '', '', '');
         }
         const currentSessions = await checkSessions(email);
         if (currentSessions !== null && currentSessions <= 0) {
-            return res.status(403).json({ error: 'You have used all 5 free sessions. Thank you for trying Trakky!' });
+            return res.status(403).json({ error: 'You have used all your free sessions. Thank you for trying Trakky!' });
         }
         // ------------------------------------
 
@@ -422,44 +504,66 @@ app.post('/api/swap', async (req, res) => {
 
         console.log(`[Generate] User: ${email} | Style: ${hairstyle} | Gender: ${gender}`);
 
-        // 1. Pad to 1024x1024
-        const { buffer: paddedBuffer, origW, origH } = await padToSquare(imgPath);
+        // 1. Smart face crop for screenshots / full body images
+        const { targetPath: procImgPath, isTemporary } = await smartCropImage(imgPath);
 
-        // 2. Write temp file for OpenAI SDK (requires ReadStream)
+        // 2. Pad to 1024x1024
+        const { buffer: paddedBuffer, origW, origH } = await padToSquare(procImgPath);
+
+        // Cleanup temporary smart crop file
+        if (isTemporary) {
+            try { fs.unlinkSync(procImgPath); } catch {}
+        }
+
+        // 3. Write temp file for OpenAI SDK (requires ReadStream)
         const tmpPath = path.join(uploadDir, `tmp_${Date.now()}.png`);
         fs.writeFileSync(tmpPath, paddedBuffer);
 
-        // 3. Call OpenAI images.edit — single image, medium quality
+        // 3. Call OpenAI images.edit (gpt-image-2) — generate 1 image for selected style
+        const NUM_IMAGES = 1;
+        const fileObj = await OpenAI.toFile(fs.createReadStream(tmpPath), 'image.png', { type: 'image/png' });
         const aiRes = await openai.images.edit({
-            image: fs.createReadStream(tmpPath),
+            model: "gpt-image-2",
+            image: fileObj,
             prompt: HAIRSTYLE_PROMPT(gender, hairstyle),
-            n: 1,
-            size: "1024x1024",
-            response_format: "b64_json"
+            n: NUM_IMAGES,
+            size: "1024x1024"
         });
 
         // Cleanup temp
         try { fs.unlinkSync(tmpPath); } catch {}
 
-        const b64 = aiRes.data[0].b64_json;
-        const resultBuffer = Buffer.from(b64, 'base64');
-
-        // 4. Crop back to original size + watermark
-        const outName = `result_${Date.now()}.jpg`;
-        const outPath = path.join(uploadDir, outName);
-        await cropAndRestore(resultBuffer, origW, origH, outPath);
+        // 4. Process all generated images — crop back to original size + watermark
+        const results = [];
+        for (let i = 0; i < aiRes.data.length; i++) {
+            const item = aiRes.data[i];
+            let resultBuffer;
+            if (item.b64_json) {
+                resultBuffer = Buffer.from(item.b64_json, 'base64');
+            } else if (item.url) {
+                const imgRes = await fetch(item.url);
+                const arrayBuf = await imgRes.arrayBuffer();
+                resultBuffer = Buffer.from(arrayBuf);
+            } else {
+                throw new Error('No image URL or b64_json in OpenAI response.');
+            }
+            const outName = `result_${Date.now()}_${i}.jpg`;
+            const outPath = path.join(uploadDir, outName);
+            await cropAndRestore(resultBuffer, origW, origH, outPath);
+            results.push({
+                url: `uploads/${outName}`,
+                style_name: hairstyle
+            });
+        }
 
         // 5. Decrement session in DB
         const remainingSessions = await decrementSession(email);
 
-        console.log(`[Generate] Done! Remaining sessions for ${email}: ${remainingSessions}`);
+        console.log(`[Generate] Done! ${results.length} images for ${email} | Remaining sessions: ${remainingSessions}`);
 
         res.json({
             success: true,
-            result: {
-                url: `uploads/${outName}`,
-                style_name: hairstyle
-            },
+            results: results,
             sessionsRemaining: remainingSessions
         });
 
