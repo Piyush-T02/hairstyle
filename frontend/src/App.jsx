@@ -435,10 +435,6 @@ export default function App() {
             <button
               className="btn-secondary"
               onClick={() => {
-                setImageFile(null);
-                setImageUrl('');
-                setGender('');
-                setSelectedStyle('');
                 setResults([]);
                 setHeroIdx(0);
                 setStep('upload');
