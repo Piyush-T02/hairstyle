@@ -324,21 +324,27 @@ def serve_uploads(request, path):
 
 def serve_frontend(request, path=''):
     public_dir = os.path.join(settings.BASE_DIR, 'public')
-    dist_index = os.path.join(public_dir, 'dist', 'index.html')
-    public_index = os.path.join(public_dir, 'index.html')
-
+    frontend_dist_dir = os.path.join(settings.BASE_DIR, 'frontend', 'dist')
+    
     if path:
-        target_file = os.path.join(public_dir, path)
-        if os.path.exists(target_file) and os.path.isfile(target_file):
-            content_type, _ = mimetypes.guess_type(target_file)
-            if target_file.endswith('.js'):
-                content_type = 'application/javascript'
-            elif target_file.endswith('.css'):
-                content_type = 'text/css'
-            return FileResponse(open(target_file, 'rb'), content_type=content_type or 'application/octet-stream')
+        for folder in [frontend_dist_dir, public_dir]:
+            target_file = os.path.join(folder, path)
+            if os.path.exists(target_file) and os.path.isfile(target_file):
+                content_type, _ = mimetypes.guess_type(target_file)
+                if target_file.endswith('.js'):
+                    content_type = 'application/javascript'
+                elif target_file.endswith('.css'):
+                    content_type = 'text/css'
+                return FileResponse(open(target_file, 'rb'), content_type=content_type or 'application/octet-stream')
 
-    if os.path.exists(public_index):
-        return FileResponse(open(public_index, 'rb'), content_type='text/html')
-    if os.path.exists(dist_index):
-        return FileResponse(open(dist_index, 'rb'), content_type='text/html')
+    possible_indexes = [
+        os.path.join(frontend_dist_dir, 'index.html'),
+        os.path.join(public_dir, 'index.html'),
+        os.path.join(public_dir, 'dist', 'index.html'),
+    ]
+    for idx_path in possible_indexes:
+        if os.path.exists(idx_path):
+            return FileResponse(open(idx_path, 'rb'), content_type='text/html')
+
     return HttpResponse("Frontend React build index.html not found", status=404)
+
