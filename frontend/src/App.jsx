@@ -303,8 +303,8 @@ export default function App() {
 
           {!imageFile ? (
             <div className="upload-options">
-              {/* Hidden file inputs */}
-              <input ref={fileRef} type="file" accept="image/*" hidden onChange={handleFileChange} onClick={e => { e.target.value = ''; }} />
+              {/* Hidden file inputs with explicit MIME types for Android (OnePlus) & iOS (HEIC) support */}
+              <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif" hidden onChange={handleFileChange} onClick={e => { e.target.value = ''; }} />
               <input ref={cameraRef} type="file" accept="image/*" capture="user" hidden onChange={handleFileChange} onClick={e => { e.target.value = ''; }} />
 
               <div className="upload-btn-group">
