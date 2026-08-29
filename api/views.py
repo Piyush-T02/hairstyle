@@ -1,6 +1,6 @@
 """
 Django REST API views for Trakky AI Hairstyle Transformation.
-Handles user registration, mobile OTP authentication, image uploads, and OpenAI hairstyle generation.
+Handles user registration, image uploads, and OpenAI hairstyle generation.
 """
 
 import os
@@ -21,9 +21,6 @@ from api.models import AppUser
 from api.image_processor import smart_crop_image, pad_to_square, crop_and_restore
 
 logger = logging.getLogger(__name__)
-
-# In-memory store for OTP records
-OTP_STORE = {}
 
 # Allowed image extensions for uploads
 ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif'}
@@ -128,122 +125,6 @@ def register_user(request):
     except Exception as e:
         logger.error(f"[DB Registration Error] {e}", exc_info=True)
         return JsonResponse({'error': 'Registration failed. Please try again.'}, status=500)
-
-
-@csrf_exempt
-@api_view(['POST'])
-def send_otp(request):
-    """
-    Generate OTP verification code for user mobile number authentication.
-    
-    NOTE FOR INTEGRATION TEAM:
-    Connect your preferred mobile SMS Gateway API (e.g. Twilio, MSG91, Fast2SMS, or AWS SNS)
-    inside this function to deliver the generated 6-digit OTP code to `mobile`.
-    """
-    data = request.data
-    mobile = data.get('mobile', '').strip()
-    email = data.get('email', '').strip().lower()
-    identifier = mobile or email
-
-    if not identifier:
-        return JsonResponse({'error': 'Mobile number or email is required.'}, status=400)
-
-    try:
-        user = None
-        if mobile:
-            user = AppUser.objects.filter(mobile=mobile).first()
-        if not user and email:
-            user = AppUser.objects.filter(email=email).first()
-
-        if user and user.sessions <= 0:
-            return JsonResponse({'error': 'This user has already used all free trial sessions.'}, status=403)
-    except Exception as e:
-        logger.error(f"[DB Check Error] {e}")
-
-    otp = str(random.randint(100000, 999999))
-    OTP_STORE[identifier] = {'otp': otp, 'expires': time.time() + 300}
-    logger.info(f"[MOBILE OTP GENERATED] Target: {identifier} | Code: {otp}")
-
-    # =========================================================================
-    # SMS / MOBILE OTP GATEWAY INTEGRATION PLACEHOLDER:
-    # -------------------------------------------------------------------------
-    # To deliver SMS OTP via your gateway provider (Twilio / MSG91 / Fast2SMS),
-    # insert your HTTP API call here using `mobile` and `otp`.
-    #
-    # Example (Twilio / Fast2SMS / Custom HTTP SMS Gateway API):
-    #
-    # response = requests.post("https://api.your-sms-gateway.com/send", json={
-    #     "to": mobile,
-    #     "message": f"Your Trakky verification code is: {otp}"
-    # })
-    # =========================================================================
-
-    return JsonResponse({'success': True, 'message': 'Mobile OTP generated successfully.'})
-
-
-@csrf_exempt
-@api_view(['POST'])
-def verify_otp(request):
-    """Verify mobile OTP code and initialize user session."""
-    data = request.data
-    email = data.get('email', '').strip().lower()
-    mobile = data.get('mobile', '').strip()
-    name = data.get('name', '').strip()
-    location = data.get('location', '').strip()
-    otp = data.get('otp', '').strip()
-
-    identifier = mobile or email
-    if not identifier:
-        return JsonResponse({'error': 'Mobile number or email is required.'}, status=400)
-
-    if otp:
-        is_master = (otp in ['123456', '999999'])
-        record = OTP_STORE.get(identifier)
-
-        if not is_master and record:
-            if time.time() > record['expires']:
-                OTP_STORE.pop(identifier, None)
-                return JsonResponse({'error': 'OTP code expired. Please request a new one.'}, status=400)
-            if record['otp'] != otp:
-                return JsonResponse({'error': 'Invalid OTP verification code. Please check your phone.'}, status=400)
-
-        OTP_STORE.pop(identifier, None)
-
-    try:
-        user = None
-        if mobile:
-            user = AppUser.objects.filter(mobile=mobile).first()
-        if not user and email:
-            user = AppUser.objects.filter(email=email).first()
-
-        if user:
-            if mobile: user.mobile = mobile
-            if name: user.name = name
-            if location: user.location = location
-            user.save()
-        else:
-            user = AppUser.objects.create(
-                email=email or f"user_{int(time.time())}@trakky.local",
-                mobile=mobile,
-                name=name,
-                location=location,
-                sessions=5
-            )
-
-        return JsonResponse({
-            'success': True,
-            'user': {
-                'id': user.id,
-                'email': user.email,
-                'mobile': user.mobile,
-                'name': user.name,
-                'location': user.location,
-                'sessions': user.sessions
-            }
-        })
-    except Exception as e:
-        logger.error(f"[DB Verification Error] {e}")
-        return JsonResponse({'error': 'Database registration failed.'}, status=500)
 
 
 @csrf_exempt
