@@ -9,12 +9,12 @@ An AI-powered hairstyle transformation and virtual salon try-on web application.
 - **Frontend**: **React** (Vite SPA located in `frontend/`) with a responsive UI.
 - **Backend**: **Django REST Framework** (Python 3 backend located in `api/` and `trakky_backend/`).
 - **AI Engine**: OpenAI Image Editing (`gpt-image-2` / DALL-E 2 image edit API).
-- **Computer Vision Pipeline**: OpenCV (smart face detection & auto-cropping) + PIL / Sharp (aspect ratio preservation, 1024x1024 padding, restoration & watermarking).
+- **Computer Vision Pipeline**: OpenCV (smart face detection & auto-cropping) + PIL (aspect ratio preservation, 1024x1024 padding, restoration & watermarking).
 - **Database**: Django ORM (SQLite / PostgreSQL compatible) for user session and registration tracking.
 
 ---
 
-## 🔑 IMPORTANT: Setting Up Your OpenAI API Key
+## 🔑 Setting Up Your OpenAI API Key
 
 To run the application and generate AI hairstyles, **you must configure your own OpenAI API key**:
 
@@ -23,7 +23,6 @@ Create a `.env` file in the project root directory (or set environment variables
 
 ```env
 OPENAI_API_KEY=sk-proj-YOUR_ACTUAL_OPENAI_API_KEY_HERE
-BREVO_API_KEY=your_optional_brevo_key_for_email_otps
 ```
 
 ### Option 2: Key File
@@ -35,14 +34,37 @@ sk-proj-YOUR_ACTUAL_OPENAI_API_KEY_HERE
 
 ---
 
+## 📱 Mobile SMS OTP Notification Integration Note
+
+> **Note for Development & Integration Team**:
+> Email OTP notifications have been removed as mobile SMS notification OTPs will be used for authentication.
+> 
+> The Django backend (`api/views.py`) generates and validates 6-digit OTP codes for user mobile numbers and provides a dedicated SMS gateway integration hook inside the `send_otp` function.
+> 
+> **How to connect your Mobile SMS Gateway**:
+> 1. Open `api/views.py`.
+> 2. Locate the `send_otp` view function.
+> 3. Insert your SMS Gateway HTTP API request (e.g. Twilio, MSG91, Fast2SMS, or AWS SNS) using the provided `mobile` number and `otp` code:
+> 
+> ```python
+> # Example SMS Gateway Integration in send_otp (api/views.py):
+> response = requests.post("https://api.your-sms-gateway.com/send", json={
+>     "to": mobile,
+>     "message": f"Your Trakky verification code is: {otp}"
+> })
+> ```
+
+---
+
 ## ⚙️ How It Works
 
-1. **User Registration & OTP Authentication**:
-   - The user enters their email/phone details and receives an OTP.
-   - User receives 5 free try-on sessions tracked in the database.
+1. **User Registration & Mobile OTP Authentication**:
+   - The user enters their mobile number / profile details.
+   - A 6-digit verification OTP code is generated and validated by the backend.
+   - New users receive 5 free try-on sessions tracked in the database.
 
 2. **Image Upload & Pre-Processing**:
-   - The user uploads a photo.
+   - The user uploads a photo (supports mobile gallery, camera capture, JPEG, PNG, WebP, and iOS HEIC formats).
    - **EXIF Normalization**: Fixes portrait/landscape orientation from mobile phone uploads.
    - **Smart Face Crop**: OpenCV detects facial landmarks to center and frame the face properly for best AI results.
    - **Aspect-Preserved Square Padding**: Pads the image to `1024x1024` without stretching or distorting aspect ratios.
@@ -93,7 +115,7 @@ npm install
 # Start Vite dev server (runs on http://localhost:5173)
 npm run dev
 
-# Or build production bundle into public/ directory
+# Or build production bundle into frontend/dist
 npm run build
 ```
 
@@ -117,7 +139,7 @@ npm run build
 | :--- | :--- | :--- |
 | `GET` | `/api/health` | Backend status check |
 | `POST` | `/api/register` | Register user profile & set free sessions |
-| `POST` | `/api/send_otp` | Trigger OTP email verification |
+| `POST` | `/api/send_otp` | Trigger mobile OTP verification code generation |
 | `POST` | `/api/verify_otp` | Verify OTP code & return user profile |
 | `POST` | `/api/upload` | Upload user photo |
 | `POST` | `/api/swap` | Perform AI hairstyle transformation |

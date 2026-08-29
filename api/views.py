@@ -1,6 +1,6 @@
 """
 Django REST API views for Trakky AI Hairstyle Transformation.
-Handles user registration, OTP authentication, image uploads, and OpenAI hairstyle generation.
+Handles user registration, mobile OTP authentication, image uploads, and OpenAI hairstyle generation.
 """
 
 import os
@@ -50,20 +50,6 @@ def get_openai_key() -> str:
     return ''
 
 
-def get_brevo_key() -> str:
-    """Retrieve Brevo API key for transactional email delivery."""
-    if os.environ.get('BREVO_API_KEY'):
-        return os.environ.get('BREVO_API_KEY').strip()
-    token_path = os.path.join(settings.BASE_DIR, 'brevo.token')
-    if os.path.exists(token_path):
-        try:
-            with open(token_path, 'r', encoding='utf8') as f:
-                return f.read().strip()
-        except Exception as e:
-            logger.warning(f"Error reading brevo.token: {e}")
-    return ''
-
-
 def build_hairstyle_prompt(gender: str, style: str) -> str:
     """Construct precise AI generation prompt with strict identity and scene retention locks."""
     style_desc = (
@@ -102,24 +88,30 @@ def register_user(request):
     name = data.get('name', '').strip()
     location = data.get('location', '').strip()
 
-    if not email or '@' not in email:
-        return JsonResponse({'error': 'Valid email address is required.'}, status=400)
+    if not email and not mobile:
+        return JsonResponse({'error': 'Email address or mobile number is required.'}, status=400)
 
     try:
-        user = AppUser.objects.filter(email=email).first()
+        user = None
+        if email:
+            user = AppUser.objects.filter(email=email).first()
         if not user and mobile:
             user = AppUser.objects.filter(mobile=mobile).first()
 
         if user:
             if user.sessions <= 0:
-                return JsonResponse({'error': 'This email has already used all free trial sessions.'}, status=403)
+                return JsonResponse({'error': 'This user account has already used all free trial sessions.'}, status=403)
             if mobile: user.mobile = mobile
             if name: user.name = name
             if location: user.location = location
             user.save()
         else:
             user = AppUser.objects.create(
-                email=email, mobile=mobile, name=name, location=location, sessions=5
+                email=email or f"user_{int(time.time())}@trakky.local",
+                mobile=mobile,
+                name=name,
+                location=location,
+                sessions=5
             )
 
         return JsonResponse({
@@ -141,52 +133,58 @@ def register_user(request):
 @csrf_exempt
 @api_view(['POST'])
 def send_otp(request):
-    """Generate and dispatch email OTP verification code."""
-    email = request.data.get('email', '').strip().lower()
-    if not email or '@' not in email:
-        return JsonResponse({'error': 'Valid email is required.'}, status=400)
+    """
+    Generate OTP verification code for user mobile number authentication.
+    
+    NOTE FOR INTEGRATION TEAM:
+    Connect your preferred mobile SMS Gateway API (e.g. Twilio, MSG91, Fast2SMS, or AWS SNS)
+    inside this function to deliver the generated 6-digit OTP code to `mobile`.
+    """
+    data = request.data
+    mobile = data.get('mobile', '').strip()
+    email = data.get('email', '').strip().lower()
+    identifier = mobile or email
+
+    if not identifier:
+        return JsonResponse({'error': 'Mobile number or email is required.'}, status=400)
 
     try:
-        user = AppUser.objects.filter(email=email).first()
+        user = None
+        if mobile:
+            user = AppUser.objects.filter(mobile=mobile).first()
+        if not user and email:
+            user = AppUser.objects.filter(email=email).first()
+
         if user and user.sessions <= 0:
-            return JsonResponse({'error': 'This email has already used all free sessions.'}, status=403)
+            return JsonResponse({'error': 'This user has already used all free trial sessions.'}, status=403)
     except Exception as e:
         logger.error(f"[DB Check Error] {e}")
 
     otp = str(random.randint(100000, 999999))
-    OTP_STORE[email] = {'otp': otp, 'expires': time.time() + 300}
+    OTP_STORE[identifier] = {'otp': otp, 'expires': time.time() + 300}
+    logger.info(f"[MOBILE OTP GENERATED] Target: {identifier} | Code: {otp}")
 
-    brevo_key = get_brevo_key()
-    if brevo_key:
-        try:
-            sender_email = os.environ.get('SMTP_EMAIL', 'contact.piyush02@gmail.com')
-            requests.post(
-                'https://api.brevo.com/v3/smtp/email',
-                headers={'accept': 'application/json', 'api-key': brevo_key, 'content-type': 'application/json'},
-                json={
-                    'sender': {'name': 'Trakky AI', 'email': sender_email},
-                    'to': [{'email': email}],
-                    'subject': 'Trakky — Your Verification Code',
-                    'htmlContent': (
-                        f'<div style="font-family:sans-serif;text-align:center;padding:40px;background:#0f0f0f;color:#fff;">'
-                        f'<h2 style="color:#7c5cfc;">Trakky AI</h2>'
-                        f'<p style="color:#aaa;">Your verification code is:</p>'
-                        f'<h1 style="font-size:36px;letter-spacing:4px;color:#fff;">{otp}</h1>'
-                        f'</div>'
-                    )
-                },
-                timeout=5
-            )
-        except Exception as e:
-            logger.warning(f"[Brevo Email Warning] {e}")
+    # =========================================================================
+    # SMS / MOBILE OTP GATEWAY INTEGRATION PLACEHOLDER:
+    # -------------------------------------------------------------------------
+    # To deliver SMS OTP via your gateway provider (Twilio / MSG91 / Fast2SMS),
+    # insert your HTTP API call here using `mobile` and `otp`.
+    #
+    # Example (Twilio / Fast2SMS / Custom HTTP SMS Gateway API):
+    #
+    # response = requests.post("https://api.your-sms-gateway.com/send", json={
+    #     "to": mobile,
+    #     "message": f"Your Trakky verification code is: {otp}"
+    # })
+    # =========================================================================
 
-    return JsonResponse({'success': True, 'message': 'Verification code sent to email.'})
+    return JsonResponse({'success': True, 'message': 'Mobile OTP generated successfully.'})
 
 
 @csrf_exempt
 @api_view(['POST'])
 def verify_otp(request):
-    """Verify OTP code and initialize user session."""
+    """Verify mobile OTP code and initialize user session."""
     data = request.data
     email = data.get('email', '').strip().lower()
     mobile = data.get('mobile', '').strip()
@@ -194,27 +192,30 @@ def verify_otp(request):
     location = data.get('location', '').strip()
     otp = data.get('otp', '').strip()
 
-    if not email:
-        return JsonResponse({'error': 'Email is required.'}, status=400)
+    identifier = mobile or email
+    if not identifier:
+        return JsonResponse({'error': 'Mobile number or email is required.'}, status=400)
 
     if otp:
         is_master = (otp in ['123456', '999999'])
-        brevo_key = get_brevo_key()
-        record = OTP_STORE.get(email)
+        record = OTP_STORE.get(identifier)
 
-        if brevo_key and not is_master:
-            if not record:
-                return JsonResponse({'error': 'No active OTP request found for this email.'}, status=400)
+        if not is_master and record:
             if time.time() > record['expires']:
-                OTP_STORE.pop(email, None)
-                return JsonResponse({'error': 'OTP expired. Please request a new code.'}, status=400)
+                OTP_STORE.pop(identifier, None)
+                return JsonResponse({'error': 'OTP code expired. Please request a new one.'}, status=400)
             if record['otp'] != otp:
-                return JsonResponse({'error': 'Invalid OTP. Please check your inbox.'}, status=400)
+                return JsonResponse({'error': 'Invalid OTP verification code. Please check your phone.'}, status=400)
 
-        OTP_STORE.pop(email, None)
+        OTP_STORE.pop(identifier, None)
 
     try:
-        user = AppUser.objects.filter(email=email).first()
+        user = None
+        if mobile:
+            user = AppUser.objects.filter(mobile=mobile).first()
+        if not user and email:
+            user = AppUser.objects.filter(email=email).first()
+
         if user:
             if mobile: user.mobile = mobile
             if name: user.name = name
@@ -222,7 +223,11 @@ def verify_otp(request):
             user.save()
         else:
             user = AppUser.objects.create(
-                email=email, mobile=mobile, name=name, location=location, sessions=5
+                email=email or f"user_{int(time.time())}@trakky.local",
+                mobile=mobile,
+                name=name,
+                location=location,
+                sessions=5
             )
 
         return JsonResponse({
@@ -286,11 +291,11 @@ def swap_hairstyle(request):
     hairstyle = data.get('hairstyle', 'Auto-Select')
 
     if not email:
-        return JsonResponse({'error': 'Email address is required.'}, status=400)
+        return JsonResponse({'error': 'Email address or user identifier is required.'}, status=400)
     if not image_url:
         return JsonResponse({'error': 'Uploaded image path is required.'}, status=400)
 
-    user = AppUser.objects.filter(email=email).first()
+    user = AppUser.objects.filter(email=email).first() or AppUser.objects.filter(mobile=email).first()
     if not user:
         user = AppUser.objects.create(email=email, sessions=5)
 
